@@ -385,3 +385,31 @@ lockfile de npm y este workspace es de pnpm.
 
 Sólo después de un run verde se revocan las credenciales de automatización
 antiguas, si quedara alguna del bootstrap manual.
+
+## Patches automatizados posteriores a `v0.2.0`
+
+Un patch se prepara en un PR ordinario que actualiza `package.json`, cierra su
+sección en `CHANGELOG.md` y sincroniza cualquier versión visible en los docs.
+No se crea el tag desde la rama del PR y no se publica manualmente en npm.
+
+Después de fusionar el PR de versión, la secuencia para `v0.2.1` es:
+
+```powershell
+git switch main
+git pull --ff-only origin main
+if (git status --porcelain) { throw "main must be clean before tagging" }
+$releaseVersion = "0.2.1"
+if ((node -p "require('./package.json').version") -ne $releaseVersion) { throw "package.json version mismatch" }
+if (-not (Select-String -Quiet -LiteralPath CHANGELOG.md -SimpleMatch "## [$releaseVersion]")) { throw "CHANGELOG section missing" }
+$releaseTag = "v$releaseVersion"
+git tag $releaseTag
+git push origin $releaseTag
+$releaseRunId = gh run list --workflow release.yml --branch $releaseTag --event push --limit 1 --json databaseId --jq '.[0].databaseId'
+gh run watch $releaseRunId --exit-status
+corepack pnpm view "mcp-durable-tasks@$releaseVersion" version dist-tags --json
+gh release view $releaseTag
+```
+
+El workflow vuelve a ejecutar lint, cobertura y validación del tarball antes de
+publicar. La página de npm debe mostrar provenance apuntando al run de
+`release.yml` del tag exacto.

@@ -81,7 +81,7 @@ specification does not define that delivery mechanism either; see
 
 ## Status
 
-The current release is `v0.2.0`. It includes the engine, both stores, the public
+The current release is `v0.2.1`. It includes the engine, both stores, the public
 conformance kit, property-based state-machine tests, real crash tests and the
 runnable crash-recovery example. It is published from GitHub Actions through
 npm trusted publishing, with provenance tied to the release tag and commit.
@@ -111,7 +111,7 @@ To validate the exact tag from source instead:
 ```sh
 git clone https://github.com/AndresSaa/mcp-durable-tasks.git
 cd mcp-durable-tasks
-git checkout v0.2.0
+git checkout v0.2.1
 corepack pnpm install --frozen-lockfile
 corepack pnpm test
 ```
