@@ -253,7 +253,10 @@ La primera versión del registro es manual por decisión del mantenedor y porque
 npm no permite vincular un Trusted Publisher a un paquete que aún no existe.
 Se publica desde el tag exacto, con cuenta protegida por 2FA y provenance
 desactivado explícitamente: una máquina local no puede producir la atestación
-de GitHub Actions.
+de GitHub Actions. pnpm sigue siendo dueño de la instalación y de todos los
+scripts del repo; este bootstrap usa excepcionalmente el CLI de npm para su
+flujo de autenticación web y para sobrescribir de forma explícita el
+`publishConfig.provenance: true` que usarán las versiones automatizadas.
 
 ```powershell
 git switch main
@@ -264,14 +267,22 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm lint
 corepack pnpm test
 corepack pnpm lint:package
-corepack pnpm whoami
-corepack pnpm publish --dry-run --access public --publish-branch main --provenance=false
-corepack pnpm publish --access public --publish-branch main --provenance=false
-corepack pnpm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
+npm login --auth-type=web --registry=https://registry.npmjs.org/
+npm whoami
+npm publish --dry-run --access public --provenance=false
+npm publish --access public --provenance=false
+npm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
 ```
 
-No guardar tokens en GitHub ni en ficheros del repo. Tras comprobar que
-`0.1.0` existe:
+No pasar `--otp`: con una security key/WebAuthn configurada, npm abre el enlace
+de autorización y el reto se confirma en el navegador. Si la cuenta sólo tiene
+TOTP, el registro pedirá necesariamente el código; `--auth-type=web` no cambia
+el segundo factor configurado en la cuenta.
+
+No guardar tokens en GitHub ni en ficheros del repo. `--provenance=false` es
+obligatorio en ambos comandos de publicación; omitirlo hace que el
+`publishConfig` intente generar una atestación local y falle porque no existe
+un proveedor CI. Tras comprobar que `0.1.0` existe:
 
 1. npmjs.com → package → Settings/Access → Trusted Publisher.
 2. Vincular GitHub Actions con owner `AndresSaa`, repo
@@ -279,6 +290,7 @@ No guardar tokens en GitHub ni en ficheros del repo. Tras comprobar que
 3. Activar la automatización posterior:
 
    ```powershell
+   npm trust github mcp-durable-tasks --file release.yml --repo AndresSaa/mcp-durable-tasks --allow-publish --yes
    gh variable set NPM_TRUSTED_PUBLISHING --repo AndresSaa/mcp-durable-tasks --body enabled
    ```
 
@@ -286,6 +298,13 @@ No guardar tokens en GitHub ni en ficheros del repo. Tras comprobar que
    automática. El workflow falla, en vez de omitir npm silenciosamente, si la
    variable no está activa. Sólo después de una publicación OIDC verde se
    restringen/revocan credenciales de automatización antiguas.
+
+Cuando el Trusted Publisher esté configurado, cerrar la sesión local revoca el
+token creado por el login web:
+
+```powershell
+npm logout --registry=https://registry.npmjs.org/
+```
 
 `v0.1.0` no tendrá provenance y queda documentada como la única excepción. Para
 `v0.2.0` y versiones posteriores, verificar la atestación en npmjs.com o desde un
