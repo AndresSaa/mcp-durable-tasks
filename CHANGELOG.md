@@ -10,6 +10,46 @@ either is a major version.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-11
+
+The first release published over OIDC with a provenance attestation. No engine
+code changed since `0.1.0`: what changed is the runnable evidence that the
+central claim holds, and a correction to what the shipped documentation says
+about the official SDK.
+
+### Added
+
+- `examples/crash-recovery/`: a real MCP server whose deferred task outlives
+  its process. One command starts it, defers work through `tools/call`, kills
+  the server with `SIGKILL`, starts it again and reads the finished result back
+  from the new process. It asserts the recovered status and result rather than
+  narrating them, and it runs on every pull request, so it cannot quietly stop
+  being true. The README links a recording of it.
+- `examples/conformance-reproductions/`: frozen reproductions of the three
+  upstream behaviours reported from this repository, pinned to
+  `@modelcontextprotocol/*` 2.0.0. Each one asserts its own finding, so it
+  fails when upstream fixes it — reported as
+  [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14),
+  [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637)
+  and a reproduction on
+  [typescript-sdk#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598).
+
+### Fixed
+
+- The README banner now resolves on the npm package page. `0.1.0` shipped a
+  repository-relative path that only rendered on GitHub, and npm freezes a
+  published README, so the fix could not reach that version.
+
+### Changed
+
+- The SDK compatibility profile in `docs/contract.md` and `docs/internals.md`
+  now records two verified workarounds for `tasks/get` and `tasks/cancel`
+  instead of one. Answering those requests above the SDK, in HTTP middleware,
+  sidesteps the protocol-era gate rather than working around it, and is the
+  better starting point for a host; the `transport.onmessage` rename still
+  works. An earlier revision called the rename "the only verified escape",
+  which was assumed rather than measured.
+
 ## [0.1.0] - 2026-08-10
 
 First public release. The GitHub tag and Release are followed by the one-time
@@ -106,5 +146,6 @@ publishing with provenance starts with the next version.
   `TaskLifecycle` remains responsible for protocol decisions and committed
   worker effects.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AndresSaa/mcp-durable-tasks/releases/tag/v0.1.0

@@ -316,3 +316,72 @@ Al publicar `v0.1.0`, completar el About:
 ```powershell
 gh repo edit AndresSaa/mcp-durable-tasks --homepage https://www.npmjs.com/package/mcp-durable-tasks
 ```
+
+## `v0.2.0`: primera publicación automática con provenance
+
+`v0.2.0` es la versión que estrena el camino que `v0.1.0` sólo dejó preparado:
+el tag dispara `release.yml`, el workflow intercambia el token OIDC con el
+registro y npm genera la atestación de procedencia. No hay ningún paso manual
+de publicación, y no debe haberlo: si hiciera falta, la variable
+`NPM_TRUSTED_PUBLISHING` estaría mintiendo.
+
+### Qué contiene
+
+No contiene cambios en `src/`. El motor publicado es byte a byte el mismo
+código que `v0.1.0`; lo que cambia es lo que el paquete afirma sobre sí mismo y
+la evidencia ejecutable de que la afirmación central se sostiene:
+
+- `examples/crash-recovery/`, un servidor MCP real cuya task sobrevive a
+  `SIGKILL`, con asserts sobre el estado recuperado y ejecución en cada PR.
+- `examples/conformance-reproductions/`, las tres reproducciones congeladas de
+  los hallazgos ya reportados aguas arriba.
+- La corrección del perfil de compatibilidad del SDK en `docs/contract.md` y
+  `docs/internals.md`, que van dentro del tarball.
+- El banner del README, que en `v0.1.0` no resuelve en la página de npm. npm
+  congela el README publicado, así que ésta es la primera versión donde el
+  arreglo llega al registro.
+
+### Requisito previo que el workflow no puede comprobar
+
+El Trusted Publisher tiene que estar vinculado en npm antes del tag. La
+variable de repositorio sólo declara la intención; quien autoriza es el
+registro. Comprobarlo con la cuenta iniciada:
+
+```powershell
+npm login --auth-type=web --registry=https://registry.npmjs.org/
+npm trust list mcp-durable-tasks
+npm logout --registry=https://registry.npmjs.org/
+```
+
+Debe aparecer una relación con owner `AndresSaa`, repositorio
+`mcp-durable-tasks`, workflow `release.yml` y sin environment. Si no aparece,
+el tag fallará en el paso de publicación con la versión ya inmutable en el
+historial de tags, y habrá que borrar el tag y repetir.
+
+### Secuencia
+
+```powershell
+git switch main
+git pull --ff-only origin main
+if (git status --porcelain) { throw "main must be clean before tagging" }
+if ((node -p "require('./package.json').version") -ne "0.2.0") { throw "package.json is not 0.2.0" }
+git tag v0.2.0
+git push origin v0.2.0
+$runId = gh run list --workflow release.yml --branch v0.2.0 --event push --limit 1 --json databaseId --jq '.[0].databaseId'
+gh run watch $runId --exit-status
+```
+
+### Verificación posterior
+
+```powershell
+npm view mcp-durable-tasks@0.2.0 version dist-tags
+gh release view v0.2.0
+```
+
+La atestación se comprueba en la página del paquete en npmjs.com, que debe
+mostrar el enlace de provenance apuntando al run de `release.yml` de este
+repositorio. `npm audit signatures` sigue sin ejecutarse aquí: necesita un
+lockfile de npm y este workspace es de pnpm.
+
+Sólo después de un run verde se revocan las credenciales de automatización
+antiguas, si quedara alguna del bootstrap manual.
