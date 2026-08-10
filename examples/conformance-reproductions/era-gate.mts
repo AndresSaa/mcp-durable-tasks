@@ -26,6 +26,9 @@ const METHODS = [
   "x-durable-tasks/get",
 ] as const;
 
+/** The two names the retired 2025-11-25 registry still claims. */
+const BLOCKED = ["tasks/get", "tasks/cancel"] as const;
+
 const reached: string[] = [];
 const fellBackTo: string[] = [];
 
@@ -130,7 +133,7 @@ console.log(
 
 /* -- The finding ---------------------------------------------------------- */
 
-for (const blocked of ["tasks/get", "tasks/cancel"] as const) {
+for (const blocked of BLOCKED) {
   assert.equal(
     (observed[blocked]?.error as { code?: number } | undefined)?.code,
     -32601,
@@ -155,10 +158,12 @@ assert.ok(
   fellBackTo.includes("totally/unknown"),
   "an unknown method does reach fallbackRequestHandler",
 );
-assert.ok(
-  !fellBackTo.includes("tasks/get"),
-  "EXPECTED (as of the report): tasks/get never reaches the fallback either",
-);
+for (const blocked of BLOCKED) {
+  assert.ok(
+    !fellBackTo.includes(blocked),
+    `EXPECTED (as of the report): ${blocked} never reaches the fallback either`,
+  );
+}
 
 console.log(
   "\nreproduced: the era gate rejects tasks/get and tasks/cancel ahead of both the handler map and the fallback.",
