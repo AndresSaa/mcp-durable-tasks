@@ -64,12 +64,13 @@
 - ✅ **Historial público preparado.** Los borradores privados están fuera del
   árbol y de cualquier objeto alcanzable; la rama contiene un único commit
   sobre `origin/main`.
-- ✅ **PR #1 abierto y matriz remota verde.** Node 22/24 pasa en Linux, macOS y
-  Windows; Node 26 también pasa. CodeQL se omite mientras el repo sea privado
-  y queda preparado para ejecución manual al hacerlo público.
-- ⬜ **Siguiente:** merge del PR, About/topics, visibilidad pública, controles
-  de seguridad, protección de `main`, CodeQL, tag `v0.1.0`, publicación npm
-  manual y configuración del Trusted Publisher, siguiendo
+- ✅ **PR #1 fusionado y matriz remota verde.** Node 22/24 pasa en Linux, macOS y
+  Windows; Node 26 también pasa. El repo ya es público y el ruleset `main`
+  exige los seis checks estables y `lint-title` con política strict. El PR #1
+  ya está mergeado y el README final se prepara en un segundo PR.
+- ⬜ **Siguiente:** merge del PR de README, completar About/topics, ejecutar
+  CodeQL, tag `v0.1.0`, publicación npm manual y configuración del Trusted
+  Publisher, siguiendo
   [`RELEASE.md`](./RELEASE.md). `v0.2.0` será la primera publicación automática
   con OIDC y provenance.
 - ⏸️ **Fase 7 no forma parte del DoD de `v0.1.0`.** La costura del SDK sigue

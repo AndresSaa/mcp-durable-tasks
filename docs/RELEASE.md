@@ -47,18 +47,15 @@ Ejecutada el 10 de agosto de 2026 sobre la rama de preparación:
 
 ## Estado remoto comprobado el 10 de agosto de 2026
 
-- `AndresSaa/mcp-durable-tasks` existe, es privado y `main` sólo contiene el
-  commit inicial.
+- `AndresSaa/mcp-durable-tasks` es público y el PR #1 ya está fusionado en
+  `main`.
 - Issues y Discussions están activos; existen las categorías Q&A e Ideas que
   enlazan las plantillas del repo.
-- Faltan descripción, topics, homepage y protección de `main`.
+- El ruleset `main` está activo. Faltan descripción, topics, homepage y
+  desactivar merge commits/rebase merge y Projects.
 - No existe ningún tag y `mcp-durable-tasks` sigue libre en el registro npm.
-- GitHub no permite activar branch protection en este repo mientras siga
-  privado con la cuenta actual; se aplica inmediatamente después de hacerlo
-  público.
-- CodeQL también se omite mientras el repo sea privado: GitHub Free no permite
-  subir resultados de Code Scanning en ese estado. El workflow tiene trigger
-  manual para ejecutarlo justo después de hacerlo público.
+- La ejecución de CodeQL del PR #1 se omitió cuando el repo aún era privado;
+  el workflow tiene trigger manual para ejecutarlo ahora que es público.
 
 ## Gate local antes de subir
 
@@ -192,10 +189,10 @@ diferencia intencionada es dejar sólo squash merge, porque aquí el título del
 PR es el commit de `main` y lo valida CI. No hacen falta Projects ni Wiki; el
 roadmap y la documentación ya tienen dueños claros dentro del repo.
 
-Al abrirlo:
+Con el repositorio ya público, completar los controles de seguridad y ejecutar
+CodeQL:
 
 ```powershell
-gh repo edit AndresSaa/mcp-durable-tasks --visibility public --accept-visibility-change-consequences
 gh api --method PUT repos/AndresSaa/mcp-durable-tasks/vulnerability-alerts
 gh api --method PUT repos/AndresSaa/mcp-durable-tasks/automated-security-fixes
 gh repo edit AndresSaa/mcp-durable-tasks --enable-secret-scanning --enable-secret-scanning-push-protection
@@ -213,45 +210,21 @@ gh discussion create -R AndresSaa/mcp-durable-tasks --category Announcements --t
 
 ## Protección de `main`
 
-Aplicar después de hacer público el repo y antes de empezar la siguiente fase.
-Node 26 no es requerido: es una señal informativa. El count de approvals queda
-en cero porque el repo tiene un único mantenedor; siguen siendo obligatorios el
-PR, la conversación resuelta y todos los gates estables.
+El ruleset `main` (`20643761`) está activo sobre la rama por defecto: prohíbe
+borrados y non-fast-forward, exige PR con squash y requiere que la rama esté al
+día. Los seis checks estables Node 22/24 y `lint-title` están configurados como
+obligatorios. Node 26 es informativo; CodeQL y Socket Security no se convierten
+en puntos únicos de bloqueo externos.
 
 ```powershell
-$protection = @'
-{
-  "required_status_checks": {
-    "strict": true,
-    "contexts": [
-      "Node 22 / ubuntu-latest",
-      "Node 22 / macos-latest",
-      "Node 22 / windows-latest",
-      "Node 24 / ubuntu-latest",
-      "Node 24 / macos-latest",
-      "Node 24 / windows-latest",
-      "lint-title"
-    ]
-  },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": false,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 0,
-    "require_last_push_approval": false
-  },
-  "restrictions": null,
-  "required_conversation_resolution": true,
-  "required_linear_history": true,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "lock_branch": false,
-  "allow_fork_syncing": true
-}
-'@
-$protection | gh api --method PUT repos/AndresSaa/mcp-durable-tasks/branches/main/protection --input -
+gh api repos/AndresSaa/mcp-durable-tasks/rulesets/20643761 `
+  --jq '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
 ```
+
+`lint-title` solo pudo añadirse después de mergear el primer PR: antes no
+existía en `main`, porque `pull_request_target` carga el workflow desde la rama
+base. Para todas las ramas siguientes es el séptimo check obligatorio, igual
+que en `process-wal`.
 
 ## Tag y GitHub Release `v0.1.0`
 
@@ -259,9 +232,13 @@ Comprobar que `main` contiene `package.json` en `0.1.0` y la sección
 `CHANGELOG.md` correspondiente. Luego:
 
 ```powershell
+git switch main
+git pull --ff-only origin main
+if (git status --porcelain) { throw "main must be clean before tagging" }
+if ((node -p "require('./package.json').version") -ne "0.1.0") { throw "package.json is not 0.1.0" }
 git tag v0.1.0
 git push origin v0.1.0
-$runId = gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId'
+$runId = gh run list --workflow release.yml --branch v0.1.0 --event push --limit 1 --json databaseId --jq '.[0].databaseId'
 gh run watch $runId --exit-status
 gh release view v0.1.0
 ```
@@ -279,16 +256,18 @@ desactivado explícitamente: una máquina local no puede producir la atestación
 de GitHub Actions.
 
 ```powershell
-git switch --detach v0.1.0
+git switch main
+git pull --ff-only origin main
+if ((git rev-parse HEAD) -ne (git rev-list -n 1 v0.1.0)) { throw "main is not the tagged v0.1.0 commit" }
+if (git status --porcelain) { throw "main must be clean before publishing" }
 corepack pnpm install --frozen-lockfile
 corepack pnpm lint
 corepack pnpm test
 corepack pnpm lint:package
-npm whoami
-$env:NPM_CONFIG_PROVENANCE = "false"
-npm publish --access public
-Remove-Item Env:NPM_CONFIG_PROVENANCE
-npm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
+corepack pnpm whoami
+corepack pnpm publish --dry-run --access public --publish-branch main --provenance=false
+corepack pnpm publish --access public --publish-branch main --provenance=false
+corepack pnpm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
 ```
 
 No guardar tokens en GitHub ni en ficheros del repo. Tras comprobar que
