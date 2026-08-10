@@ -434,7 +434,9 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
 
 - **F9.2 [1h]** Publicar `v0.2.0` desde `release.yml` con Trusted Publishing,
   OIDC y provenance; verificar la atestación y que el workflow falla de forma
-  segura si la variable de activación no está configurada.
+  segura si la variable de activación no está configurada. La secuencia y la
+  comprobación previa del Trusted Publisher están en
+  [`RELEASE.md`](./RELEASE.md#v020-primera-publicación-automática-con-provenance).
 
 ---
 
@@ -484,6 +486,14 @@ paquete publicado.
 relevante van **dentro** del issue; el permalink al script ejecutable va con
 SHA completo del commit, nunca a `main`. Aunque el ejemplo vivo cambie después,
 el issue conserva la evidencia revisada.
+
+**Y el SHA tiene que ser alcanzable desde `main`.** Los dos primeros reportes
+se enlazaron al commit de la rama _antes_ del squash. Resolvía en el navegador
+—la rama seguía en origin— pero las instrucciones del propio issue
+(`git clone` + `git checkout <sha>`) habrían dejado de funcionar en cuanto la
+rama se borrara: un clon nuevo no trae ese objeto. Se corrigieron a los commits
+fusionados. La regla completa es **SHA completo del commit de `main`**, y se
+comprueba clonando en limpio antes de publicar, no después.
 
 ---
 
