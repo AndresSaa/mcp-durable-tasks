@@ -1,0 +1,146 @@
+name: Release
+
+# A release is a tag push, never an automatic reaction to a merge: the version
+# bump lands as an ordinary reviewed pull request first, and tagging is the
+# deliberate second step that publishes it.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # An npm version is immutable once taken, so a job that hangs is worse than
+    # one that fails: it holds the tag in limbo with no signal.
+    timeout-minutes: 20
+    permissions:
+      # contents: write creates the GitHub Release. id-token: write mints the
+      # OIDC token npm exchanges for a short-lived credential — it is the whole
+      # reason no publish token lives in this repository.
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so leaving a credential in .git/config only
+          # widens what a compromised step could reach.
+          persist-credentials: false
+          # The tag alone is not enough to prove it descends from main.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Release jobs deliberately do not restore a dependency cache. npm's
+      # trusted-publishing guidance recommends building the published artifact
+      # from a clean install rather than a mutable shared cache.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify the tag matches package.json
+        # A tag disagreeing with the manifest would publish a version nobody
+        # reviewed, and npm versions are immutable once taken. Fail before that.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag v$tag does not match package.json $manifest" >&2
+            exit 1
+          fi
+
+      - name: Verify the tag is on main
+        # Matching versions is not enough: a tag can be pushed at any commit,
+        # including one that never passed review. Only history that main
+        # contains may be published.
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "$GITHUB_SHA is not an ancestor of origin/main" >&2
+            exit 1
+          fi
+
+      - name: Decide whether this tag publishes to npm
+        id: release-policy
+        env:
+          TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
+        # v0.1.0 is the one-time manual registry bootstrap: the npm package has
+        # to exist before its trusted publisher can be configured. After that,
+        # the maintainer sets NPM_TRUSTED_PUBLISHING=enabled and v0.2.0 onward
+        # must publish over OIDC. Every valid tag still gets a GitHub Release.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node -e '
+            const [major, minor] = process.argv[1].split(".").map(Number);
+            if (major === 0 && minor < 2) {
+              console.log(`npm publication skipped for manual bootstrap release ${process.argv[1]}`);
+              process.exit(0);
+            }
+            if (process.env.TRUSTED_PUBLISHING !== "enabled") {
+              console.error(`trusted publishing is not enabled for ${process.argv[1]}`);
+              process.exit(1);
+            }
+            process.stdout.write("publish");
+          ' "$version" > "$RUNNER_TEMP/release-policy"
+          cat "$RUNNER_TEMP/release-policy"
+          if grep -qx "publish" "$RUNNER_TEMP/release-policy"; then
+            echo "publish-npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish-npm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract the release notes
+        # Done before publishing, not after: a missing changelog section would
+        # otherwise fail once the version is already immutable on npm.
+        #
+        # Written outside the checkout, so the artefact the release makes is not
+        # somewhere `prettier . --check` would find it and fail the gate below.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { capturing = 1; next }
+            capturing && /^## \[/ { exit }
+            capturing { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "no CHANGELOG.md section found for $version" >&2
+            exit 1
+          fi
+
+      # The artifact that ships must be the one the matrix approved, so the same
+      # gate runs again here rather than trusting the pull request's green tick.
+      - run: pnpm lint
+      - run: pnpm coverage
+      - run: pnpm lint:package
+
+      # npm CLI performs the OIDC exchange with the registry. Keep this pinned
+      # publisher client separate from pnpm, which owns installation and all
+      # repository scripts.
+      - name: Install the trusted-publishing client
+        if: steps.release-policy.outputs.publish-npm == 'true'
+        run: npm install -g npm@12.0.2
+
+      # No NODE_AUTH_TOKEN: authentication and the provenance attestation both
+      # come from OIDC. publishConfig in package.json carries --access public
+      # and --provenance.
+      - name: Publish to npm with provenance
+        if: steps.release-policy.outputs.publish-npm == 'true'
+        run: npm publish
+
+      - name: Create the GitHub Release from the changelog entry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prerelease=()
+          if [[ "${GITHUB_REF_NAME#v}" == 0.* ]]; then
+            prerelease+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --verify-tag \
+            "${prerelease[@]}"

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Deliberately unfiltered. Filtering on `branches` matches the *base* branch,
+  # so a stacked pull request aimed at another feature branch would run no CI at
+  # all — the failure mode that cost the sibling repository six unverified
+  # merges. Every pull request runs the matrix, whatever it targets.
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # `engines` says >=22, which claims support for Current as well as the
+        # two LTS lines. One leg keeps that claim honest without tripling the
+        # matrix for a version nobody deploys yet. It is deliberately not a
+        # required check: it tracks a release nobody ships on, and an upstream
+        # regression there would otherwise block every unrelated pull request.
+        include:
+          - node: 26
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm coverage
+      # Windows matters here beyond the usual: `lint:package` packs, installs
+      # and imports the tarball through a `cmd.exe` shim, and the WalTaskStore
+      # crash tests depend on rename-over-open-file semantics that differ from
+      # POSIX. Both are first-class targets, not a courtesy leg.
+      - run: pnpm lint:package

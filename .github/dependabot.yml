@@ -1,0 +1,55 @@
+version: 2
+updates:
+  # Dev dependencies only — the main entry point ships zero runtime
+  # dependencies, and `process-wal` is an optional peer that consumers install
+  # themselves.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # Two groups with identical membership, because `applies-to` defaults to
+      # version updates: without the second one, security advisories bypass
+      # grouping entirely and arrive as one pull request per package.
+      dev-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      security-advisories:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    ignore:
+      # typescript-eslint constrains typescript with a peer range, so a major
+      # bump arriving on its own makes `pnpm install` fail before any test runs. Move
+      # the two together, by hand.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # @types/node tracks the engines floor (Node 22), not the newest release:
+      # newer types would let code compile against APIs the supported runtime
+      # does not have.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # Ungrouped, an action that exposes several paths arrives as one pull
+      # request per path. codeql-action is the case that proves it matters:
+      # `init` and `analyze` ship from one commit and the action refuses to run
+      # when they disagree, so split bumps are red by construction.
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

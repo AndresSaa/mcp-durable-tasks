@@ -1,0 +1,16 @@
+# Questions and feature ideas belong in Discussions, where they stay findable
+# as answers rather than closing as "not a bug". Issues stay for defects.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Question — does this fit my case?
+    url: https://github.com/AndresSaa/mcp-durable-tasks/discussions/categories/q-a
+    about: Ask in Q&A. If you are looking for something that organizes or tracks work, this is not that package — see CONTRIBUTING.md.
+
+  - name: Idea — it should also do X
+    url: https://github.com/AndresSaa/mcp-durable-tasks/discussions/categories/ideas
+    about: Propose it in Ideas. Read the scope constraints in CONTRIBUTING.md first — community stores, framework adapters and queue features are declined by design.
+
+  - name: Security vulnerability
+    url: https://github.com/AndresSaa/mcp-durable-tasks/security/advisories/new
+    about: Report privately, never in a public issue. See SECURITY.md for what is in scope.
