@@ -1,0 +1,18 @@
+{
+  "name": "mcp-durable-tasks-example-conformance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Frozen reproductions of upstream MCP behaviour reported from this repository. Not usage examples.",
+  "scripts": {
+    "all": "node --experimental-strip-types result-type.mts && node --experimental-strip-types schema.mts && node --experimental-strip-types era-gate.mts",
+    "result-type": "node --experimental-strip-types result-type.mts",
+    "schema": "node --experimental-strip-types schema.mts",
+    "era-gate": "node --experimental-strip-types era-gate.mts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0"
+  }
+}

@@ -15,6 +15,11 @@ export default tseslint.config(
       "dist/**",
       ".history/**",
       "test/fixtures/ext-tasks/**",
+      // Untracked cross-agent scratch space. It routinely holds throwaway
+      // probes and an audit's reproduction cases; linting them would report
+      // scratch work as repository defects. Vitest excludes it for the same
+      // reason.
+      ".ai/**",
     ],
   },
   eslint.configs.recommended,
@@ -40,6 +45,22 @@ export default tseslint.config(
           ],
         },
       ],
+    },
+  },
+  {
+    // The example workspaces are Node programs, not library code: they open
+    // sockets, read fixtures and print results. They are also outside the
+    // published package, so the no-`node:*` boundary that governs `src/` does
+    // not apply to them.
+    files: ["examples/**/*.mts"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+        setTimeout: "readonly",
+      },
     },
   },
   {

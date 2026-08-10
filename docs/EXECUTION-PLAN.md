@@ -352,10 +352,19 @@ El corazón del proyecto y el material del demo (ver [verification](./contract.m
 Consecuencia del Spike 0. **Mantenerla pequeña es un requisito, no una
 preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar transporte.
 
-- **R7.1 [1h] — Leer cómo lo hace el Inspector.** Localizar en
-  `modelcontextprotocol/inspector` el punto exacto donde reescribe el frame
-  y qué más tuvo que tocar. Si ellos tropezaron con algo que nosotros no
-  hemos visto, sale aquí y no en producción.
+- **R7.1 — HECHA, y corrigió una premisa falsa del plan.** Este paso decía
+  «localizar el punto donde el Inspector reescribe el frame». **El Inspector no
+  reescribe frames.** Responde los POST de `tasks/*` en middleware HTTP _antes_
+  de que `createMcpHandler` los vea (`test-servers/src/modern-tasks.ts`) y en
+  cliente los manda como frames crudos con `transport.send()`
+  (`core/mcp/inspectorClient.ts`). La afirmación venía del borrador original,
+  se repitió sin verificar y llegó a decir «la única vía verificada» en el
+  contrato público. Corregido allí.
+
+  Consecuencia para F7.2: hay **dos** vías, y la del Inspector —interceptar por
+  encima del SDK— esquiva el era-gate en vez de sortearlo. Decidir cuál antes
+  de escribir código.
+
 - **F7.2 [1.5h]** La costura: renombrar `tasks/get` y `tasks/cancel` en
   `transport.onmessage` antes de `Protocol`. Con la prueba del Spike 0 como
   test de regresión — si una versión futura del SDK readmite esos métodos,
@@ -392,15 +401,67 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
 
 ## Fase 9 — Demo y v0.2.0 · ~4h
 
-- **F9.1 [2.5h]** Repo `mcp-durable-tasks-crashtest`: servidor MCP con una
-  task larga → `kill -9` → reinicio → el siguiente `tasks/get` devuelve el
-  resultado. 40 segundos de asciinema.
+- **F9.1 [2.5h] — `examples/crash-recovery/` en ESTE repo**, no un repositorio
+  aparte: servidor MCP con una task larga → `kill -9` → reinicio → el siguiente
+  `tasks/get` devuelve el resultado. 40 segundos de asciinema.
   _Por qué esto y no un log de auditoría bonito:_ un log bonito no le duele a
   nadie; perder trabajo sí.
+
+  **Cambio de decisión — el plan decía repositorio separado.** Ver abajo.
+
 - **F9.2 [1h]** Publicar `v0.2.0` desde `release.yml` con Trusted Publishing,
   OIDC y provenance; verificar la atestación y que el workflow falla de forma
   segura si la variable de activación no está configurada.
 - **F9.3 [0.5h]** Enlazar el asciinema desde el README.
+
+---
+
+### La decisión de `examples/` (sustituye al repo separado de F9.1)
+
+El plan original sacaba el demo a `mcp-durable-tasks-crashtest`. Se descarta:
+un segundo repositorio es un segundo dependabot, CI, README y protección de
+rama, con 8h/semana; y **un demo que se pudre es peor que ninguno**, porque su
+valor entero es credibilidad. Dentro del repo cae bajo el mismo CI y las mismas
+auditorías. Los no objetivos prohíben un segundo **paquete**, no un directorio
+de ejemplos privado.
+
+**Dos paquetes privados, no uno**, y la razón importa:
+
+```
+examples/
+  README.md
+  conformance-reproductions/   evidencia histórica  — versiones EXACTAS, congeladas
+  crash-recovery/              documentación viva   — se actualiza con lo soportado
+```
+
+- `conformance-reproductions/` fija `@modelcontextprotocol/*` en `2.0.0` sin
+  rango, **y sigue fijado incluso después de que upstream lo arregle**. Un
+  issue enlaza a un script en un commit concreto como su evidencia; ese enlace
+  tiene que seguir significando lo que significaba cuando lo revisaron.
+- `crash-recovery/` es lo contrario: tiene que seguir el rango soportado y
+  representar la forma recomendada de usar la librería.
+
+Un solo `package.json` obligaría algún día a elegir entre actualizar el demo o
+conservar reproducibles los hallazgos. Por eso son dos.
+
+**CI: `examples-pinned` es bloqueante.** Con versiones y lockfile fijados,
+upstream no puede romperlos por su cuenta — si ese job falla es porque un
+cambio de este repo rompió un ejemplo publicado o invalidó una reproducción
+que un issue enlaza, y ambas cosas son defectos del repositorio. No se equipara
+a la pierna de Node 26, que explora un entorno móvil; esto es determinista.
+Un `examples-sdk-current` opcional y no bloqueante puede avisar de deriva más
+adelante.
+
+Aislamiento verificado: los paquetes son privados, sus dependencias no entran
+en los `devDependencies` de raíz, `files` excluye `examples/` por lista
+explícita, y `pnpm lint:package` sigue demostrando que el consumidor no las
+recibe. El lockfile crece; es coste de desarrollo, no de runtime ni del
+paquete publicado.
+
+**Cómo se citan en los issues:** el caso mínimo, expected/actual y la salida
+relevante van **dentro** del issue; el permalink al script ejecutable va con
+SHA completo del commit, nunca a `main`. Aunque el ejemplo vivo cambie después,
+el issue conserva la evidencia revisada.
 
 ---
 
