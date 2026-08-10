@@ -248,6 +248,22 @@ async function flushEffects(): Promise<void> {
   for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
 }
 
+async function expectResolvedWaiter(
+  waiter: TrackedWaiter,
+  expected: InputResponses,
+): Promise<void> {
+  await flushEffects();
+  expect(waiter.settlements).toBe(1);
+  expect(waiter.outcome).toBe("resolved");
+  expect(waiter.value).toEqual(expected);
+}
+
+async function expectRejectedWaiter(waiter: TrackedWaiter): Promise<void> {
+  await flushEffects();
+  expect(waiter.settlements).toBe(1);
+  expect(waiter.outcome).toBe("rejected");
+}
+
 async function waitUntilParked(engine: TaskLifecycle): Promise<void> {
   for (let turn = 0; turn < 50; turn += 1) {
     const view = await engine.getTask(TASK_ID);
@@ -550,9 +566,8 @@ describe("property-based task state machine", () => {
                           model.inputRequests = undefined;
                           model.inputResponses = undefined;
                           if (activeWaiter !== undefined) {
-                            await activeWaiter.promise;
-                            expect(activeWaiter.outcome).toBe("resolved");
-                            expect(activeWaiter.value).toEqual(
+                            await expectResolvedWaiter(
+                              activeWaiter,
                               expectedResponses,
                             );
                             activeWaiter = undefined;
@@ -576,8 +591,7 @@ describe("property-based task state machine", () => {
                     if (!isTerminal(model.status)) {
                       model.signalAborted = true;
                       if (activeWaiter !== undefined) {
-                        await activeWaiter.promise.catch(() => undefined);
-                        expect(activeWaiter.outcome).toBe("rejected");
+                        await expectRejectedWaiter(activeWaiter);
                         activeWaiter = undefined;
                       }
                     }
@@ -612,8 +626,7 @@ describe("property-based task state machine", () => {
                     }
                     commit(model);
                     if (activeWaiter !== undefined) {
-                      await activeWaiter.promise.catch(() => undefined);
-                      expect(activeWaiter.outcome).toBe("rejected");
+                      await expectRejectedWaiter(activeWaiter);
                       activeWaiter = undefined;
                     }
                   }
@@ -634,5 +647,8 @@ describe("property-based task state machine", () => {
       ),
       { numRuns: 150 },
     );
-  }, 30_000);
+    // This file competes with real child-process crash tests in the full
+    // Windows suite. Keep all 150 runs while leaving enough wall-clock budget
+    // for slower hosts; waiter failures above remain bounded and actionable.
+  }, 60_000);
 });

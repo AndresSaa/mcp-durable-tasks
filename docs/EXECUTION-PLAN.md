@@ -68,6 +68,10 @@
   Windows; Node 26 también pasa. El repo ya es público y el ruleset `main`
   exige los seis checks estables y `lint-title` con política strict. El PR #1
   ya está mergeado y el README final se prepara en un segundo PR.
+- ✅ **Property suite estabilizada para el gate local.** Se mantienen las 150
+  ejecuciones y todos los invariantes; las esperas de input se comprueban como
+  efectos de microtarea acotados y el presupuesto del fichero sube a 60 s para
+  no competir artificialmente con los crash tests en hosts Windows lentos.
 - ⬜ **Siguiente:** merge del PR de README, completar About/topics, ejecutar
   CodeQL, tag `v0.1.0`, publicación npm manual y configuración del Trusted
   Publisher, siguiendo
