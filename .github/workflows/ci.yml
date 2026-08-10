@@ -51,3 +51,26 @@ jobs:
       # crash tests depend on rename-over-open-file semantics that differ from
       # POSIX. Both are first-class targets, not a courtesy leg.
       - run: pnpm lint:package
+
+  examples-pinned:
+    name: examples (pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      # Blocking on purpose. The example workspaces pin exact SDK versions and
+      # the lockfile freezes the rest, so upstream cannot break these on its
+      # own — a failure here means a change in this repository broke a
+      # published example or invalidated a reproduction that an upstream issue
+      # links to. Both are defects worth stopping a merge for.
+      #
+      # One Linux leg is enough: nothing in these exercises platform
+      # behaviour, unlike the crash tests in the matrix above.
+      - run: pnpm --filter mcp-durable-tasks-example-conformance run all
