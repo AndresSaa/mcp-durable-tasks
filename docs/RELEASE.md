@@ -265,12 +265,8 @@ corepack pnpm lint
 corepack pnpm test
 corepack pnpm lint:package
 corepack pnpm whoami
-$env:NPM_CONFIG_PROVENANCE = "false"
-try {
-  corepack pnpm publish --access public --publish-branch main
-} finally {
-  Remove-Item Env:NPM_CONFIG_PROVENANCE -ErrorAction SilentlyContinue
-}
+corepack pnpm publish --dry-run --access public --publish-branch main --provenance=false
+corepack pnpm publish --access public --publish-branch main --provenance=false
 corepack pnpm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
 ```
 
