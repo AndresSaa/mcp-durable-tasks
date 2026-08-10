@@ -17,9 +17,9 @@ representing the recommended way to use the package, that is a bug.
 
 `demo.mts` drives the whole thing in one command and asserts the outcome, so
 it is safe to record and it fails loudly rather than printing a happy story.
-`server.mts` is the part worth reading: it also shows the single workaround a
-host needs today, because `tasks/get` and `tasks/cancel` cannot be served
-through the SDK's handler registration on a 2026-07-28 connection.
+`server.mts` is the part worth reading: it also shows the simplest verified
+host workaround, because `tasks/get` and `tasks/cancel` cannot be served through
+the SDK's handler registration on a 2026-07-28 connection.
 
 ## `conformance-reproductions/` — frozen evidence
 

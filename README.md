@@ -11,9 +11,11 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/AndresSaa/mcp-durable-tasks/badge)](https://scorecard.dev/viewer/?uri=github.com/AndresSaa/mcp-durable-tasks)
 
 **A durable task state machine for the MCP Tasks extension
-(`io.modelcontextprotocol/tasks`, SEP-2663).** Zero runtime dependencies, pure
-TypeScript, one job: hold a long-running operation's state so `tasks/get` can
-still answer after the worker, the connection, or the whole process has gone.
+(`io.modelcontextprotocol/tasks`, SEP-2663).** Pure TypeScript, with zero
+runtime dependencies on its main entry point. Its one job is to hold a
+long-running operation's state; with `WalTaskStore`, state already confirmed by
+the application remains available to `tasks/get` after the connection or the
+whole process has gone.
 
 This is **a library you import into an MCP server** — not a server you add to
 `mcp.json`, and not a to-do manager. "Tasks" here means the extension's durable
@@ -79,10 +81,13 @@ specification does not define that delivery mechanism either; see
 
 ## Status
 
-The codebase is ready for `v0.1.0`: the engine, both included stores, the
-conformance kit and the crash tests are in place. This is also the first npm
-release. Its registry publication is deliberately manual; later versions are
-published from GitHub Actions with trusted publishing and provenance.
+The current release is `v0.2.0`. It includes the engine, both stores, the public
+conformance kit, property-based state-machine tests, real crash tests and the
+runnable crash-recovery example. It is published from GitHub Actions through
+npm trusted publishing, with provenance tied to the release tag and commit.
+
+`v0.1.0` was the one-time manual registry bootstrap. No later release uses a
+long-lived npm token.
 
 The public API remains provisional until `1.0.0`; the version roadmap and open
 extension questions live in
@@ -95,7 +100,7 @@ Requires Node.js 22 or newer.
 The library supports Node.js 22 from its first release; working from source
 uses the pinned pnpm 11 toolchain and therefore needs Node.js 22.13 or newer.
 
-To install the first registry release:
+To install the current registry release:
 
 ```sh
 pnpm add mcp-durable-tasks
@@ -106,7 +111,7 @@ To validate the exact tag from source instead:
 ```sh
 git clone https://github.com/AndresSaa/mcp-durable-tasks.git
 cd mcp-durable-tasks
-git checkout v0.1.0
+git checkout v0.2.0
 corepack pnpm install --frozen-lockfile
 corepack pnpm test
 ```
@@ -248,21 +253,27 @@ output is also included below for text-only readers:
 ```
 
 It runs on every pull request, so it cannot quietly stop being true. The
-server also shows the one workaround a host needs today — see the next section.
+server also shows the simplest verified host workaround — see the next section.
 
 ## Known gap in the official SDK
 
 On a `2026-07-28` server built with `@modelcontextprotocol/server` v2, **two of
-the extension's three methods cannot be served at all.** `tasks/get` and
-`tasks/cancel` answer `-32601` before any handler runs — including
+the extension's three methods cannot be served through the SDK's registered
+handlers.** `tasks/get` and `tasks/cancel` answer `-32601` before any handler
+runs — including
 `fallbackRequestHandler` — because both names belong to the retired
 `2025-11-25` method registry and the protocol-era gate fires on the way in.
 `tasks/update` works, because SEP-2663 introduced it and no era claims the name.
 
 This is measured, not inferred; the environment and findings are in the
-[compatibility profile](docs/contract.md#typescript-sdk-v2-compatibility). The
-only verified workaround is renaming those two methods below `Protocol`, at the
-transport seam.
+[compatibility profile](docs/contract.md#typescript-sdk-v2-compatibility).
+The crash-recovery example uses the simplest verified host workaround: answer
+those two HTTP requests in middleware before `createMcpHandler`. Renaming the
+methods below `Protocol`, at the transport seam, is also verified. The SDK bug
+is tracked in
+[typescript-sdk#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598),
+with an
+[upstream fix under review](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599).
 
 ## Writing your own store
 

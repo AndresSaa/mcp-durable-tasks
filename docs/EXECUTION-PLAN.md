@@ -6,8 +6,8 @@
 > se archivaron fuera del repositorio antes del primer push y se eliminaron;
 > el historial se compactó para que tampoco viajen en commits anteriores.
 >
-> **Revisión 3** — 10 agosto 2026, auditoría de preparación de `v0.1.0` y
-> operativa de apertura/publicación. El procedimiento ejecutable vive en
+> **Revisión 4** — 11 agosto 2026, `v0.2.0` publicada y fase de implementación
+> cerrada a la espera de señales upstream. El procedimiento ejecutable vive en
 > [`RELEASE.md`](./RELEASE.md).
 
 ---
@@ -75,14 +75,19 @@
 - ✅ **Bootstrap npm verificado.** La publicación inicial usa autenticación web
   del CLI npm y `--provenance=false` explícito; pnpm conserva instalación y
   scripts, y desde `v0.2.0` el workflow publica con OIDC y provenance.
-- ⬜ **Siguiente:** merge del PR de README, completar About/topics, ejecutar
-  CodeQL, tag `v0.1.0`, publicación npm manual y configuración del Trusted
-  Publisher, siguiendo
-  [`RELEASE.md`](./RELEASE.md). `v0.2.0` será la primera publicación automática
-  con OIDC y provenance.
-- ⏸️ **Fase 7 no forma parte del DoD de `v0.1.0`.** La costura del SDK sigue
-  sin construir y se declara así en los docs públicos. Se decide después de la
-  respuesta upstream a A6; no se finge soporte de transporte en este tag.
+- ✅ **`v0.1.0` publicada y bootstrap de npm cerrado.** La publicación inicial
+  fue manual, se configuró el Trusted Publisher y no quedó ningún token de npm
+  en GitHub.
+- ✅ **Fase 9 y `v0.2.0` completas.** Demo real, asciinema, tag, GitHub Release
+  y publicación npm sobre OIDC con attestations de provenance ligadas al commit
+  `f1154da`.
+- ✅ **Fase 10 completa.** Los hallazgos se dividieron por componente y
+  propietario: schema en `ext-tasks`, `resultType` en `typescript-sdk` y una
+  reproducción independiente en el issue existente del era-gate.
+- ⏸️ **Siguiente: mantenimiento de `0.2.x`, no expansión.** Fase 7 y el driver
+  de cliente quedan en espera de respuestas o cambios upstream en A6/A8/A10,
+  o de una necesidad demostrada por usuarios. No se convierte un workaround
+  provisional del SDK en API pública.
 
 ### Decisiones de la Fase 8
 
@@ -432,10 +437,11 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
   clon limpio de `faf4943`, el commit fusionado de la Fase 9. El README enlaza
   la reproducción y conserva el bloque de salida como alternativa textual.
 
-- **F9.2 [1h]** Publicar `v0.2.0` desde `release.yml` con Trusted Publishing,
-  OIDC y provenance; verificar la atestación y que el workflow falla de forma
-  segura si la variable de activación no está configurada. La secuencia y la
-  comprobación previa del Trusted Publisher están en
+- **F9.2 — ✅ HECHA.** `v0.2.0` se publicó desde `release.yml` mediante Trusted
+  Publishing, OIDC y provenance. El
+  [run de publicación](https://github.com/AndresSaa/mcp-durable-tasks/actions/runs/31440098853)
+  terminó verde; npm expone attestations de publicación y SLSA ligadas al tag,
+  al workflow y al commit `f1154da`. La secuencia reproducible queda en
   [`RELEASE.md`](./RELEASE.md#v020-primera-publicación-automática-con-provenance).
 
 ---
@@ -497,19 +503,23 @@ comprueba clonando en limpio antes de publicar, no después.
 
 ---
 
-## Fase 10 — El issue · ~3h · **la semana de mayor ROI, no se recorta**
+## Fase 10 — Conformidad upstream · ✅ HECHA
 
-- **R10.1 [1h] — Releer los PRs abiertos de `ext-tasks` antes de escribir.**
-  Sobre todo el que corrige `MISSING_REQUIRED_CLIENT_CAPABILITY` a `-32021`:
-  **es literalmente nuestra ambigüedad A1**, y preguntar algo que ya está en
-  un PR abierto es la forma más rápida de parecer que no hiciste los deberes.
-  Revisar también si #11 ("stalled tasks") toca nuestro A3/A4.
-- **F10.2 [2h]** Escribir el issue en `modelcontextprotocol/ext-tasks`.
-  Formato: **informe de conformidad de un implementador**, con A1–A6 como
-  preguntas concretas. **A6 va primero** — es el hallazgo más fuerte: gap
-  reproducible, causa localizada en el código, superficie de arreglo pequeña.
-  La librería se menciona **una vez, al final**, como contexto de dónde
-  salieron las preguntas. No "he hecho una librería, ¿os gusta?".
+- **R10.1 — ✅ HECHA.** Se revisaron los PRs e issues abiertos antes de
+  publicar. A1 ya estaba en movimiento; en #11 se respondió sobre enumeración y
+  TTL sin desviar el hilo hacia esta librería.
+- **F10.2 — ✅ HECHA, con cambio de estrategia.** Un informe único habría
+  mezclado propietarios y permitido cerrar tres hallazgos con una sola decisión.
+  Se publicaron por separado y con reproducciones fijadas a commits de `main`:
+  - [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14):
+    fidelidad del JSON Schema;
+  - [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637):
+    validación de `CreateTaskResult` y default de `resultType`;
+  - [typescript-sdk#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598):
+    reproducción independiente añadida al issue existente del era-gate.
+
+  La librería no se promociona dentro de los hallazgos; funciona como la
+  evidencia de que provienen de una implementación real.
 
 ---
 
@@ -526,9 +536,11 @@ comprueba clonando en limpio antes de publicar, no después.
 
 ## Fase 12 — Después · sin comprometer
 
-- **F12.1** v0.3.0, driver de cliente. **No se toca hasta que v0.2.0 esté
-  publicado** (ver [contrato de versiones](./contract.md#version-contract)). Está listado para que nadie lo proponga como si
-  fuera nuevo.
+- **F12.1** v0.3.0, driver de cliente. `v0.2.0` ya está publicada, pero A6 y A10
+  afectan directamente a ese límite. No se inicia hasta que haya respuesta o
+  cambio upstream, o una necesidad de usuario que justifique diseñar alrededor
+  de la incertidumbre (ver
+  [contrato de versiones](./contract.md#version-contract)).
 - **F12.2** v1.0.0 cuando las
   [preguntas de conformidad](./contract.md#conformance-questions) estén cerradas y `TaskStore` /
   `TaskLifecycle` congeladas. Entonces: reescribir la sección de API
