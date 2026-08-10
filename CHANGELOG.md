@@ -10,9 +10,15 @@ either is a major version.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-11
+
+A documentation-only maintenance release. It republishes the corrected README
+to npm, whose package pages retain the README bundled with each immutable
+version. There are no engine, API or dependency changes.
+
 ### Fixed
 
-- The README now identifies `v0.2.0` as the current release, points source
+- The README now identifies `v0.2.1` as the current release, points source
   validation at the current tag, scopes process-crash recovery to confirmed
   state held by `WalTaskStore`, and documents both verified SDK era-gate
   workarounds instead of reverting to the obsolete claim that only transport
@@ -160,6 +166,7 @@ publishing with provenance starts with the next version.
   `TaskLifecycle` remains responsible for protocol decisions and committed
   worker effects.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AndresSaa/mcp-durable-tasks/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 {
   "name": "mcp-durable-tasks",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Server-side implementation of the MCP Tasks extension (SEP-2663). Not a to-do manager.",
   "license": "MIT",
   "type": "module",

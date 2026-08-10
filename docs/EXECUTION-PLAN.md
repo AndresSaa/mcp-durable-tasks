@@ -81,6 +81,10 @@
 - ✅ **Fase 9 y `v0.2.0` completas.** Demo real, asciinema, tag, GitHub Release
   y publicación npm sobre OIDC con attestations de provenance ligadas al commit
   `f1154da`.
+- **`v0.2.1` es mantenimiento documental.** Republica en npm el README
+  corregido después de `v0.2.0`; no cambia motor, API ni dependencias. El tag se
+  crea únicamente después de fusionar su PR de versión y vuelve a usar
+  `release.yml`, OIDC y provenance.
 - ✅ **Fase 10 completa.** Los hallazgos se dividieron por componente y
   propietario: schema en `ext-tasks`, `resultType` en `typescript-sdk` y una
   reproducción independiente en el issue existente del era-gate.
