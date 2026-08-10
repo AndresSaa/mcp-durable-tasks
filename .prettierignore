@@ -1,0 +1,9 @@
+# Vendored verbatim from modelcontextprotocol/ext-tasks. `pnpm check:schema`
+# compares these byte for byte against upstream, so formatting them locally
+# turns every run into false drift — which is exactly what happened the first
+# time this directory was added without this entry.
+test/fixtures/ext-tasks/
+
+# Generated
+dist/
+coverage/

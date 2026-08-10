@@ -1,0 +1,75 @@
+name: Bug report
+description: Something behaves differently from what the documentation or the extension's schema promises
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The fields below exist because almost every
+        defect in this package is either a state-machine transition that should
+        not have been allowed, or a divergence from the published `ext-tasks`
+        schema — and both need the sequence of calls to be reproducible.
+
+        If this is a security vulnerability, please close this and follow
+        [SECURITY.md](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md)
+        instead — do not describe it in a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest sequence of lifecycle calls that shows it. If it only
+        reproduces after a restart or a crash, describe the state the store was
+        left in and the calls that led there — that is usually the important
+        part.
+      render: ts
+    validations:
+      required: true
+
+  - type: dropdown
+    id: store
+    attributes:
+      label: Which store
+      options:
+        - MemoryTaskStore
+        - WalTaskStore
+        - A TaskStore I implemented myself
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: mcp-durable-tasks version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version and platform
+      description: Output of `node --version`, plus the OS.
+      placeholder: "v22.22.2 on Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: schema
+    attributes:
+      label: Schema reference (conformance reports only)
+      description: >
+        If you are reporting a divergence from the extension's schema, link the
+        part of https://github.com/modelcontextprotocol/ext-tasks that this
+        package disagrees with. A citation turns a judgement call into a defect.
+    validations:
+      required: false
