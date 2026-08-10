@@ -27,6 +27,9 @@ import {
 
 const REVISION = "2026-07-28";
 const STAMP = "2026-08-10T00:00:00.000Z";
+const TASKS_CAPABILITIES = {
+  extensions: { "io.modelcontextprotocol/tasks": {} },
+};
 
 /** The base task handle the extension says `tools/call` may return instead. */
 const taskShape = {
@@ -53,7 +56,10 @@ const CASES: Record<string, CallToolResult> = {
 };
 
 function factory(): McpServer {
-  const mcp = new McpServer({ name: "a10-reproduction", version: "0.0.0" });
+  const mcp = new McpServer(
+    { name: "a10-reproduction", version: "0.0.0" },
+    { capabilities: TASKS_CAPABILITIES as never },
+  );
   for (const [name, value] of Object.entries(CASES)) {
     mcp.registerTool(
       name,
@@ -92,7 +98,7 @@ async function wire(name: string): Promise<Record<string, unknown>> {
         _meta: {
           "io.modelcontextprotocol/protocolVersion": REVISION,
           "io.modelcontextprotocol/clientInfo": { name: "probe", version: "0" },
-          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientCapabilities": TASKS_CAPABILITIES,
         },
       },
     }),
@@ -106,7 +112,10 @@ async function wire(name: string): Promise<Record<string, unknown>> {
 // which a strict modern endpoint rejects outright.
 const client = new Client(
   { name: "a10-client", version: "0.0.0" },
-  { versionNegotiation: { mode: { pin: REVISION } } },
+  {
+    capabilities: TASKS_CAPABILITIES as never,
+    versionNegotiation: { mode: { pin: REVISION } },
+  },
 );
 await client.connect(new StreamableHTTPClientTransport(new URL(base)));
 

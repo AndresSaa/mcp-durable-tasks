@@ -401,13 +401,34 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
 
 ## Fase 9 — Demo y v0.2.0 · ~4h
 
-- **F9.1 [2.5h] — `examples/crash-recovery/` en ESTE repo**, no un repositorio
-  aparte: servidor MCP con una task larga → `kill -9` → reinicio → el siguiente
-  `tasks/get` devuelve el resultado. 40 segundos de asciinema.
+- **F9.1 — ✅ HECHA. `examples/crash-recovery/` en ESTE repo**, no un
+  repositorio aparte: servidor MCP real con una task larga → `SIGKILL` →
+  reinicio → el siguiente `tasks/get` devuelve el resultado completo.
   _Por qué esto y no un log de auditoría bonito:_ un log bonito no le duele a
   nadie; perder trabajo sí.
 
   **Cambio de decisión — el plan decía repositorio separado.** Ver abajo.
+
+  Tres cosas que salieron al construirla:
+
+  - **`server.mts` tuvo que implementar la costura de A6.** `tasks/get` y
+    `tasks/cancel` no se pueden servir por el registro de handlers del SDK, así
+    que responde esos POST en middleware HTTP **antes** de `createMcpHandler`.
+    Es la vía del Inspector, y **eso responde de facto a R7.1/F7.2**: la
+    interceptación por encima del SDK resultó más simple que el renombrado en
+    `transport.onmessage`, no toca nada interno y es cosa del host, no de la
+    librería. Si algún día se construye la Fase 7, este es el patrón.
+  - **El demo se asevera a sí mismo.** `demo.mts` termina con `assert`s sobre
+    el estado y el resultado recuperados, así que falla en vez de imprimir una
+    historia feliz. Es requisito para poder grabarlo sin mentir.
+  - **Sin sleeps.** El driver espera la línea `listening` del servidor y el
+    estado observable de la task. Los tiempos que se ven en la grabación son
+    trabajo, no relleno.
+
+- **F9.3 — pendiente del mantenedor:** grabar el asciinema de
+  `pnpm --filter mcp-durable-tasks-example-crash-recovery run demo` y enlazarlo
+  desde el README. El bloque de salida ya está en el README como sustituto
+  textual mientras tanto.
 
 - **F9.2 [1h]** Publicar `v0.2.0` desde `release.yml` con Trusted Publishing,
   OIDC y provenance; verificar la atestación y que el workflow falla de forma

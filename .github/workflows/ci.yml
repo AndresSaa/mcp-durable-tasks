@@ -74,3 +74,7 @@ jobs:
       # One Linux leg is enough: nothing in these exercises platform
       # behaviour, unlike the crash tests in the matrix above.
       - run: pnpm --filter mcp-durable-tasks-example-conformance run all
+      # The demo tracks a supported range rather than exact versions, but the
+      # lockfile still pins what CI resolves, so this is as deterministic as
+      # the reproductions. It spawns a real server and SIGKILLs it.
+      - run: pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
