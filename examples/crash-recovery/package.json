@@ -1,0 +1,17 @@
+{
+  "name": "mcp-durable-tasks-example-crash-recovery",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A real MCP server whose task survives SIGKILL. Living documentation: tracks the supported dependency range.",
+  "scripts": {
+    "demo": "pnpm --filter mcp-durable-tasks build && node --experimental-strip-types demo.mts",
+    "server": "node --experimental-strip-types server.mts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "mcp-durable-tasks": "workspace:*",
+    "process-wal": "^1.5.1"
+  }
+}

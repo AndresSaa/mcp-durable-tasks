@@ -65,6 +65,21 @@ importers:
         specifier: 2.0.0
         version: 2.0.0
 
+  examples/crash-recovery:
+    dependencies:
+      "@modelcontextprotocol/node":
+        specifier: ^2.0.0
+        version: 2.0.0(@modelcontextprotocol/server@2.0.0)(hono@4.13.1)
+      "@modelcontextprotocol/server":
+        specifier: ^2.0.0
+        version: 2.0.0
+      mcp-durable-tasks:
+        specifier: workspace:*
+        version: link:../..
+      process-wal:
+        specifier: ^1.5.1
+        version: 1.5.1
+
 packages:
   "@andrewbranch/untar.js@1.0.4":
     resolution:

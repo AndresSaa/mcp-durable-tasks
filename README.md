@@ -221,6 +221,29 @@ duplicate input responses, cancellation, terminal races and injected CAS
 conflicts. Every step compares the full record, closed wire projection and
 single-settlement worker effects against an independent reference state.
 
+## See it survive a crash
+
+`examples/crash-recovery/` is a real MCP server whose task outlives the
+process. One command starts it, defers work through `tools/call`, kills the
+server with `SIGKILL`, starts it again, and reads the finished result back
+from the new process:
+
+```sh
+pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
+```
+
+```
+3. Kill the server outright — SIGKILL, no shutdown hook, no flush
+   process gone. Whatever is on disk is all there is.
+
+5. Ask the new process for the task the dead one finished
+   tasks/get → completed
+   result   → {"content":[{"type":"text","text":"indexed 5 files, 0 errors"}], ...}
+```
+
+It runs on every pull request, so it cannot quietly stop being true. The
+server also shows the one workaround a host needs today — see the next section.
+
 ## Known gap in the official SDK
 
 On a `2026-07-28` server built with `@modelcontextprotocol/server` v2, **two of
