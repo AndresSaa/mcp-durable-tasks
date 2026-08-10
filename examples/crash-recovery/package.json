@@ -5,7 +5,7 @@
   "type": "module",
   "description": "A real MCP server whose task survives SIGKILL. Living documentation: tracks the supported dependency range.",
   "scripts": {
-    "demo": "node --experimental-strip-types demo.mts",
+    "demo": "pnpm --filter mcp-durable-tasks build && node --experimental-strip-types demo.mts",
     "server": "node --experimental-strip-types server.mts"
   },
   "dependencies": {
