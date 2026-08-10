@@ -71,6 +71,7 @@ specification does not define that delivery mechanism either; see
 - [Documentation](#documentation)
 - [Official references](#official-references)
 - [What survives what](#what-survives-what)
+- [See it survive a crash](#see-it-survive-a-crash)
 - [Known gap in the official SDK](#known-gap-in-the-official-sdk)
 - [Writing your own store](#writing-your-own-store)
 - [Development](#development)
@@ -231,6 +232,11 @@ from the new process:
 ```sh
 pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
 ```
+
+[![Watch the crash-recovery demo](https://asciinema.org/a/U0DD3KWEttwhv5g5.svg)](https://asciinema.org/a/U0DD3KWEttwhv5g5)
+
+The recording above runs the example from a clean checkout. Its essential
+output is also included below for text-only readers:
 
 ```
 3. Kill the server outright — SIGKILL, no shutdown hook, no flush

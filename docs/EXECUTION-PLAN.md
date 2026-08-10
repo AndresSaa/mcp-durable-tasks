@@ -425,15 +425,16 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
     estado observable de la task. Los tiempos que se ven en la grabación son
     trabajo, no relleno.
 
-- **F9.3 — pendiente del mantenedor:** grabar el asciinema de
-  `pnpm --filter mcp-durable-tasks-example-crash-recovery run demo` y enlazarlo
-  desde el README. El bloque de salida ya está en el README como sustituto
-  textual mientras tanto.
+- **F9.3 — ✅ HECHA.** La
+  [grabación de crash recovery](https://asciinema.org/a/U0DD3KWEttwhv5g5)
+  ejecuta
+  `pnpm --filter mcp-durable-tasks-example-crash-recovery run demo` desde un
+  clon limpio de `faf4943`, el commit fusionado de la Fase 9. El README enlaza
+  la reproducción y conserva el bloque de salida como alternativa textual.
 
 - **F9.2 [1h]** Publicar `v0.2.0` desde `release.yml` con Trusted Publishing,
   OIDC y provenance; verificar la atestación y que el workflow falla de forma
   segura si la variable de activación no está configurada.
-- **F9.3 [0.5h]** Enlazar el asciinema desde el README.
 
 ---
 
