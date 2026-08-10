@@ -72,6 +72,9 @@
   ejecuciones y todos los invariantes; las esperas de input se comprueban como
   efectos de microtarea acotados y el presupuesto del fichero sube a 60 s para
   no competir artificialmente con los crash tests en hosts Windows lentos.
+- ✅ **Bootstrap npm verificado.** La publicación inicial usa autenticación web
+  del CLI npm y `--provenance=false` explícito; pnpm conserva instalación y
+  scripts, y desde `v0.2.0` el workflow publica con OIDC y provenance.
 - ⬜ **Siguiente:** merge del PR de README, completar About/topics, ejecutar
   CodeQL, tag `v0.1.0`, publicación npm manual y configuración del Trusted
   Publisher, siguiendo
