@@ -32,14 +32,15 @@ On a 2026-07-28 SDK v2 server, the era gate answers `-32601` to `tasks/get`
 and `tasks/cancel` before any handler — including `fallbackRequestHandler` —
 is consulted, because both names belong to the retired 2025-11-25 registry.
 `tasks/update` is registrable as an ordinary custom method, because SEP-2663
-introduced it and no era claims the name. The only verified escape for the
-other two is renaming them below `Protocol`, at the `transport.onmessage`
-seam.
+introduced it and no era claims the name. Two host-level escapes are verified:
+answer the HTTP requests in middleware before `createMcpHandler`, as the
+crash-recovery example does, or rename them below `Protocol`, at the
+`transport.onmessage` seam.
 
-So the engine stays pure state. `v0.1.0` does **not** ship the compatibility
-seam; hosts need their own narrow method rename. If the package adds one after
-the upstream answer to A6, it must remain a rename rather than growing into
-transport ownership, authentication or version negotiation. See
+So the engine stays pure state. `v0.2.0` does **not** ship a compatibility seam;
+hosts choose their own narrow middleware or transport workaround. If the
+package adds one after the upstream answer to A6, it must remain narrow rather
+than growing into transport ownership, authentication or version negotiation. See
 `docs/contract.md#typescript-sdk-v2-compatibility`.
 
 ## Context you must not work from memory on

@@ -257,7 +257,8 @@ question without a package change.
   the registry package.
 - `0.2.0`: crash-recovery demo and first automated npm publication through
   trusted publishing, OIDC and provenance.
-- `0.3.0`: optional client driver candidate, not started before `0.2.0`.
+- `0.3.0`: optional client driver candidate, held until A6/A10 receive upstream
+  clarification or a demonstrated user need justifies designing around them.
 - `1.0.0`: open extension questions are closed or recorded as explicit package
   decisions, and `TaskStore`/`TaskLifecycle` become frozen semver contracts.
 

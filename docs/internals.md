@@ -126,9 +126,10 @@ at.
 ## The compatibility seam that is not built yet
 
 On a 2026-07-28 server built with `@modelcontextprotocol/server` v2,
-`tasks/get` and `tasks/cancel` cannot be served at all: both names belong to
-the retired 2025-11-25 method registry, and the protocol-era gate answers
-`-32601` before any handler runs — including `fallbackRequestHandler`.
+`tasks/get` and `tasks/cancel` cannot be served through registered SDK handlers:
+both names belong to the retired 2025-11-25 method registry, and the
+protocol-era gate answers `-32601` before any handler runs — including
+`fallbackRequestHandler`.
 `tasks/update` works, because SEP-2663 introduced it and no era claims the name.
 
 Both known workarounds sit below the SDK's method dispatch. Renaming the two

@@ -10,6 +10,20 @@ either is a major version.
 
 ## [Unreleased]
 
+### Fixed
+
+- The README now identifies `v0.2.0` as the current release, points source
+  validation at the current tag, scopes process-crash recovery to confirmed
+  state held by `WalTaskStore`, and documents both verified SDK era-gate
+  workarounds instead of reverting to the obsolete claim that only transport
+  rewriting works.
+
+### Changed
+
+- The optional `0.3.0` client driver is now explicitly gated on upstream
+  clarity around A6/A10 or demonstrated user need, so an SDK workaround does
+  not become public API merely because `0.2.0` has shipped.
+
 ## [0.2.0] - 2026-08-11
 
 The first release published over OIDC with a provenance attestation. No engine

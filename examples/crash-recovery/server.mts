@@ -5,7 +5,7 @@
  * disk. Kill this process at any moment and start it again: the store replays
  * and `tasks/get` answers from where the dead process left off.
  *
- * ## The one workaround, and why it is here
+ * ## The host workaround used here, and why
  *
  * `tasks/get` and `tasks/cancel` cannot be served through the SDK's handler
  * registration on a 2026-07-28 connection. Their names belong to the retired
