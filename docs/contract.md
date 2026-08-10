@@ -195,8 +195,14 @@ Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
 - `tasks/update` is registrable as a custom method.
 - The cause is the protocol-era gate: get and cancel belong to the retired
   `2025-11-25` registry, while update is not claimed by any bundled era.
-- Renaming get and cancel below `Protocol`, at `transport.onmessage`, is the
-  only verified escape.
+- Two workarounds are verified, both below the SDK's method dispatch. Renaming
+  get and cancel at the `transport.onmessage` seam was measured here and works.
+  The MCP Inspector instead answers modern `tasks/*` POSTs in HTTP middleware
+  before `createMcpHandler` sees them, and on the client side sends the
+  requests as raw `transport.send()` frames
+  (`test-servers/src/modern-tasks.ts`, `core/mcp/inspectorClient.ts`).
+  Intercepting above the SDK avoids fighting the era gate at all and is the
+  better starting point for a host.
 - The output codec defaults a missing `resultType` to `"complete"` even for a
   `2026-07-28` server. It accepts and preserves an explicit `"task"` value.
 

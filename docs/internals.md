@@ -131,12 +131,20 @@ the retired 2025-11-25 method registry, and the protocol-era gate answers
 `-32601` before any handler runs — including `fallbackRequestHandler`.
 `tasks/update` works, because SEP-2663 introduced it and no era claims the name.
 
-The only verified escape is renaming those two methods below `Protocol`, at the
-`transport.onmessage` seam. The measurement and the exact dispatcher code are
-summarised in the
-[SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility); the
-seam itself is not written yet, and when it is it stays a method rename rather
-than growing into transport ownership.
+Both known workarounds sit below the SDK's method dispatch. Renaming the two
+methods at the `transport.onmessage` seam was measured here and works. The MCP
+Inspector takes the other route: it answers modern `tasks/*` POSTs in HTTP
+middleware before `createMcpHandler` sees them, and sends them client-side as
+raw `transport.send()` frames — which sidesteps the era gate rather than
+working around it.
+
+An earlier revision of this file called the rename "the only verified escape".
+That was written from the assumption that the Inspector did the same thing, and
+the assumption was never checked; it does not. The measurement and the exact
+dispatcher code are summarised in the
+[SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility). The
+seam itself is not shipped, and when it is it stays a narrow method rename
+rather than growing into transport ownership.
 
 ## Cost profile
 
