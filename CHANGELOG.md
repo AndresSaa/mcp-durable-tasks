@@ -10,6 +10,14 @@ either is a major version.
 
 ## [Unreleased]
 
+### Changed
+
+- Defined the gated pre-1.0 roadmap: a narrow task follower is preferred for
+  `0.3.0`, followed by a first-party `node:sqlite` store for one dedicated local
+  file in `0.4.0`. Reassigning that order requires a separate contract decision;
+  libSQL, Turso, `better-sqlite3` and generic MCP client behavior remain out of
+  scope.
+
 ## [0.2.1] - 2026-08-11
 
 A documentation-only maintenance release. It republishes the corrected README
