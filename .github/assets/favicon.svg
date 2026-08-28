@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none" role="img" aria-label="Icono mcp-durable-tasks, variante shield">
+    <title>mcp-durable-tasks</title>
+    <desc>Símbolo de una tarea durable gestionada mediante MCP, variante shield</desc>
+    
+    <path d="M 256 42 L 464 119.04 V 290.24 C 464 392.96, 326.72 470, 256 470 C 185.28 470, 48 392.96, 48 290.24 V 119.04 Z" fill="#9e74f815" stroke="#9e74f8" stroke-width="36" stroke-linejoin="round" />
+    <circle cx="256" cy="260.28" r="114.4" fill="#74f89e"  />
+    <circle cx="256" cy="260.28" r="86.94" fill="none" stroke="#295938" stroke-width="4" opacity="0.28" />
+    <path d="M 203.38 262.57 L 242.27 299.18 L 315.49 219.1" fill="none" stroke="#295938" stroke-width="29.74" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
