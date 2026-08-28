@@ -601,14 +601,31 @@ comportamiento queda cerrado aquí:
   de recibir la respuesta anterior y usa el `pollIntervalMs` más reciente.
   Cuando no hay hint, el default es 1.000 ms; un mínimo configurable, 50 ms por
   defecto, impide hot loops. El driver puede esperar más que el hint, nunca
-  menos que `max(hint, minimumPollIntervalMs)`.
+  menos que `max(hint, minimumPollIntervalMs)`. Los defaults y mínimos
+  configurables, igual que cada hint recibido, deben ser enteros finitos
+  `>= 0`.
 - `resolveInput({ taskId, key, request, signal })` es responsabilidad del host.
   Se invoca una sola vez por key durante una ejecución del driver. Cada promesa
   queda memoizada; las respuestas asentadas en el mismo turno de microtasks se
   envían en un único `tasks/update`, y las pendientes permiten updates
-  parciales sin volver a presentar el mismo request. Mientras espera input no
-  hace polling vacío. Si una key ya respondida reaparece en una ronda posterior,
-  falla como violación de la unicidad vitalicia de la extensión.
+  parciales sin volver a presentar el mismo request. Si una key ya respondida
+  reaparece en una ronda posterior, falla como violación de la unicidad
+  vitalicia de la extensión.
+- `tasks/update` solo devuelve un acknowledgement vacío. Después de cada update
+  confirmado, el driver hace un `tasks/get` inmediato antes de esperar más
+  input, programar el siguiente poll o interpretar otra transición; nunca
+  reutiliza el `DetailedTask` anterior como si fuera la respuesta del update.
+- Mientras hay resolvers pendientes mantiene un poll de liveness. El delay usa
+  el mayor valor entre el último hint (o `defaultPollIntervalMs`),
+  `minimumPollIntervalMs` e `inputWaitPollIntervalMs`. Este último es un entero
+  finito configurable `>= 0` y vale 5.000 ms por defecto. Ese get lento puede
+  observar terminalidad externa o el error de una task expirada, pero no vuelve
+  a invocar resolvers ni envía updates vacíos. Una variante terminal aborta las
+  señales de los resolvers pendientes y descarta sus resultados tardíos.
+- `getTask`, `updateTask` y `cancelTask` se serializan por task. Si una respuesta
+  de input queda lista durante un get, espera a que termine; si queda lista
+  antes de disparar el timer de liveness, cancela ese timer y el update tiene
+  prioridad. Nunca hay dos llamadas del adaptador en vuelo para el mismo id.
 - Un `AbortSignal` antes o durante el seguimiento aborta waits y requests,
   envía como máximo un `tasks/cancel` si ya se conoce el id y termina con la
   razón original después del acknowledgement. Si `cancelTask` falla, propaga
@@ -657,20 +674,25 @@ Una sola Work Item y un solo PR. Sus tracks obligatorios son:
 
 - **F12.1a — Contrato y validación.** Superficie `/client`, adaptador
   estructural, shapes runtime y errores; main sigue sin dependencias.
+  `src/client.ts` entra en la misma regla ESLint que prohíbe imports `node:*` en
+  `src/index.ts` y `src/testing.ts`; el boundary web-standard no depende de una
+  revisión manual.
 - **F12.1b — Polling.** Timers falsos, intervalos dinámicos, ausencia de
-  overlap, seed base frente a respuesta detallada, terminalidad, resume y
-  abort durante espera/request.
+  overlap, seed base frente a respuesta detallada, get obligatorio tras el ack
+  de update, prioridad update/poll, polling lento durante input pendiente,
+  terminalidad, resume y abort durante espera/request.
 - **F12.1c — Input rounds.** Dedupe por key, respuestas parciales, varias keys
   resueltas en distinto orden y en el mismo turno, reaparición ilegal de una
-  key ya respondida, resolver que falla y cancelación con prompts pendientes.
+  key ya respondida, resolver que falla, terminalidad externa y cancelación con
+  prompts pendientes; los resultados tardíos no producen updates.
 - **F12.1d — Integración.** SDK real sobre HTTP, headers/routing propiedad del
   SDK/host, resultados `complete` y `task`, A6 y A10 cubiertas por regresiones.
 - **F12.1e — Rendimiento y empaquetado.** Una ejecución retiene O(keys vistas)
   y O(1) estado de polling; no acumula timers, listeners ni requests tras
   terminal/abort. Tests con timers falsos recorren 10.000 polls sin tiempo real,
-  verifican una sola request y un solo timer activos, y cubren la carrera entre
-  terminalidad y abort sin enviar un cancel tardío. ESM/CJS, tarball sin SDK
-  instalado, cobertura y matriz completa.
+  verifican una sola llamada del adaptador y un solo timer activos, y cubren la
+  carrera entre terminalidad y abort sin enviar un cancel tardío. ESM/CJS,
+  tarball sin SDK instalado, cobertura y matriz completa.
 - **F12.1f — Docs y auditoría.** README, `api.md`, `contract.md`, este plan y
   changelog en el mismo PR. Auditoría independiente antes de merge; cada
   defecto confirmado empieza por un test rojo.

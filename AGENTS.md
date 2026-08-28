@@ -5,11 +5,14 @@ before changing anything.
 
 ## What this is
 
-The server-side engine of the MCP Tasks extension (`io.modelcontextprotocol/tasks`,
-SEP-2663): state machine, TTL, polling hints, and the `inputRequests` round-trip,
-behind a small `TaskStore` interface with two included implementations
-(`MemoryTaskStore`, `WalTaskStore` on top of `process-wal`). Nothing else — no
-generic queue, no agent runtime, no package family.
+The shipped surface is the server-side engine of the MCP Tasks extension
+(`io.modelcontextprotocol/tasks`, SEP-2663): state machine, TTL, polling hints,
+and the `inputRequests` round-trip, behind a small `TaskStore` interface with
+two included implementations (`MemoryTaskStore`, `WalTaskStore` on top of
+`process-wal`). The roadmap admits only two narrow additions: a task follower
+that starts after the host has a task handle, and a first-party `node:sqlite`
+store for one dedicated local file. Neither addition turns this into a generic
+MCP client, queue, agent runtime or package family.
 
 **This is not a to-do manager**, and that is not a throwaway disclaimer — see
 "Naming and positioning" below before writing a single line of copy.

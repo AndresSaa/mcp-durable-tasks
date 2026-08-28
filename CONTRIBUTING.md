@@ -19,9 +19,12 @@ what you want, and they are unrelated to this one.
 
 ## Scope is a constraint, not a starting point
 
-This package implements one role from one extension: the server-side engine and
-the `TaskStore` behind it. The small size **is** the product, so some perfectly
-reasonable ideas will be declined, and it is not personal:
+The shipped package implements one role from one extension: the server-side
+engine and the `TaskStore` behind it. The roadmap admits only a task follower
+that starts after the host already has a task handle and a first-party
+`node:sqlite` store for one dedicated local file. Neither is a general MCP
+client or a connector family. The small size **is** the product, so some
+perfectly reasonable ideas will be declined, and it is not personal:
 
 - **Zero runtime dependencies on the main entry point.** `process-wal` is an
   optional peer of the `/wal` entry point only. Anyone who wants nothing but

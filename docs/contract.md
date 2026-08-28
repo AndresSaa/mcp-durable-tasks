@@ -23,11 +23,14 @@ TypeScript surface is in [api.md](api.md), and storage guarantees are in
 
 ## Scope and authority
 
-This package implements the server-side state engine and Task Store role of the
-MCP Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). It also gives a
-server's worker a `TaskHandle` for durable progress, input, cancellation and
-terminal transitions. It does not implement the client, transport, protocol
-negotiation or worker scheduling.
+The shipped package implements the server-side state engine and Task Store role
+of the MCP Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). It also
+gives a server's worker a `TaskHandle` for durable progress, input, cancellation
+and terminal transitions. The only planned client-side exception is a narrow
+task follower that starts after the host already has a task handle
+(`CreateTaskResult` or task ID); it does not issue the original MCP request or
+become a general MCP client. The package does not own transport,
+authentication, protocol negotiation or worker scheduling.
 
 The sources for protocol behavior are, in order:
 
