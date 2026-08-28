@@ -6,8 +6,11 @@
 > se archivaron fuera del repositorio antes del primer push y se eliminaron;
 > el historial se compactó para que tampoco viajen en commits anteriores.
 >
-> **Revisión 4** — 11 agosto 2026, `v0.2.0` publicada y fase de implementación
-> cerrada a la espera de señales upstream. El procedimiento ejecutable vive en
+> **Revisión 5** — 28 agosto 2026. `v0.2.1` es la publicación actual. El
+> orden preferido es `v0.3.0` (Fase 12, driver de cliente) y `v0.4.0` (Fase
+> 13, `NodeSqliteTaskStore`). Si F12 sigue bloqueada upstream, una puerta
+> explícita permite reasignar el siguiente minor; no se hace en silencio. F13
+> no es una familia de conectores SQL. El procedimiento de publicación vive en
 > [`RELEASE.md`](./RELEASE.md).
 
 ---
@@ -20,7 +23,8 @@
   `ext-tasks`).
 - ✅ `CLAUDE.md` / `AGENTS.md` — escritos.
 - ✅ **Spike 0 resuelto** (ver [compatibilidad del SDK](./contract.md#typescript-sdk-v2-compatibility)).
-  El motor es puro estado; la costura de compatibilidad queda fuera de v0.1.0.
+  El motor es puro estado; la costura de compatibilidad permanece en el host,
+  fuera del paquete.
 - ✅ **Fase 1 completa** salvo F1.6, que es configuración de cuenta y la hace
   el mantenedor a mano. `SECURITY.md` (F8.3) se adelantó, porque
   `CONTRIBUTING.md` lo enlaza y un enlace roto en el repo no es aceptable.
@@ -81,17 +85,22 @@
 - ✅ **Fase 9 y `v0.2.0` completas.** Demo real, asciinema, tag, GitHub Release
   y publicación npm sobre OIDC con attestations de provenance ligadas al commit
   `f1154da`.
-- **`v0.2.1` es mantenimiento documental.** Republica en npm el README
-  corregido después de `v0.2.0`; no cambia motor, API ni dependencias. El tag se
-  crea únicamente después de fusionar su PR de versión y vuelve a usar
-  `release.yml`, OIDC y provenance.
+- ✅ **`v0.2.1` publicada como mantenimiento documental.** Republicó en npm el
+  README corregido después de `v0.2.0`; no cambió motor, API ni dependencias.
+  Su tag salió del PR de versión ya fusionado y usó `release.yml`, OIDC y
+  provenance.
 - ✅ **Fase 10 completa.** Los hallazgos se dividieron por componente y
   propietario: schema en `ext-tasks`, `resultType` en `typescript-sdk` y una
   reproducción independiente en el issue existente del era-gate.
-- ⏸️ **Siguiente: mantenimiento de `0.2.x`, no expansión.** Fase 7 y el driver
-  de cliente quedan en espera de respuestas o cambios upstream en A6/A8/A10,
-  o de una necesidad demostrada por usuarios. No se convierte un workaround
-  provisional del SDK en API pública.
+- ⏸️ **Prioridad: Fase 12 / `v0.3.0` (driver de cliente).** Sigue gated por
+  una revisión actual de A6/A10 o por necesidad de usuario documentada. No se
+  convierte un workaround provisional del SDK en API pública. La Fase 7 quedó
+  cerrada como investigación sin feature; A6 permanece como gate de regresión.
+- 📋 **Fase 13 / `v0.4.0` preferida está en el roadmap.** Un
+  `NodeSqliteTaskStore` de primer partido y fichero dedicado; no arrastra
+  libSQL, Turso, Postgres ni `better-sqlite3`. Si F12 continúa bloqueada y F13
+  demuestra necesidad/readiness, un cambio contractual separado puede
+  reasignarle el siguiente minor. El detalle está más abajo.
 
 ### Decisiones de la Fase 8
 
@@ -356,7 +365,7 @@ El corazón del proyecto y el material del demo (ver [verification](./contract.m
 
 ---
 
-## Fase 7 — Costura de compatibilidad con el SDK v2 · ~3h
+## Fase 7 — Investigación de la costura del SDK v2 · cerrada sin feature
 
 Consecuencia del Spike 0. **Mantenerla pequeña es un requisito, no una
 preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar transporte.
@@ -370,17 +379,19 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
   se repitió sin verificar y llegó a decir «la única vía verificada» en el
   contrato público. Corregido allí.
 
-  Consecuencia para F7.2: hay **dos** vías, y la del Inspector —interceptar por
-  encima del SDK— esquiva el era-gate en vez de sortearlo. Decidir cuál antes
-  de escribir código.
+  La consecuencia que se evaluó para F7.2 fue que hay **dos** vías, y la del
+  Inspector —interceptar por encima del SDK— esquiva el era-gate en vez de
+  sortearlo. R7.2 registra abajo por qué no se convirtió ninguna en feature.
 
-- **F7.2 [1.5h]** La costura: renombrar `tasks/get` y `tasks/cancel` en
-  `transport.onmessage` antes de `Protocol`. Con la prueba del Spike 0 como
-  test de regresión — si una versión futura del SDK readmite esos métodos,
-  queremos enterarnos por un test rojo.
-- **F7.3 [0.5h]** Decidir A6: ¿cuarto entry point `/sdk-v2` o parte del
-  principal? Criterio: si obliga a `@modelcontextprotocol/server` como peer,
-  va en su propio entry point, por la misma razón que `process-wal`.
+- **R7.2 — CERRADA fuera del paquete.** El ejemplo de crash recovery verificó
+  la costura HTTP de host, que no requiere imports internos ni renombrado bajo
+  `Protocol`. El paquete no publica `/sdk-v2`, no importa el SDK y no convierte
+  un defecto de una versión concreta en API propia.
+- **R7.3 — Gate de regresión, no Work Item.** Antes de F12 se vuelve a medir A6
+  con el SDK instalado. Si upstream readmite los métodos, se elimina el
+  workaround del ejemplo/host que ya no haga falta; si no, permanece fuera de
+  `/client`. Reabrir una costura dentro del paquete requeriría una discusión y
+  un cambio contractual independientes.
 
 ---
 
@@ -426,7 +437,8 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
     Es la vía del Inspector, y **eso responde de facto a R7.1/F7.2**: la
     interceptación por encima del SDK resultó más simple que el renombrado en
     `transport.onmessage`, no toca nada interno y es cosa del host, no de la
-    librería. Si algún día se construye la Fase 7, este es el patrón.
+    librería. Este resultado cerró F7 como investigación: el patrón pertenece
+    al host y no se convierte en un entry point del paquete.
   - **El demo se asevera a sí mismo.** `demo.mts` termina con `assert`s sobre
     el estado y el resultado recuperados, así que falla en vez de imprimir una
     historia feliz. Es requisito para poder grabarlo sin mentir.
@@ -538,34 +550,405 @@ comprueba clonando en limpio antes de publicar, no después.
 
 ---
 
-## Fase 12 — Después · sin comprometer
+## Fase 12 — Driver de cliente para Tasks · v0.3.0 preferida · gated
 
-- **F12.1** v0.3.0, driver de cliente. `v0.2.0` ya está publicada, pero A6 y A10
-  afectan directamente a ese límite. No se inicia hasta que haya respuesta o
-  cambio upstream, o una necesidad de usuario que justifique diseñar alrededor
-  de la incertidumbre (ver
-  [contrato de versiones](./contract.md#version-contract)).
-- **F12.2** v1.0.0 cuando las
-  [preguntas de conformidad](./contract.md#conformance-questions) estén cerradas y `TaskStore` /
-  `TaskLifecycle` congeladas. Entonces: reescribir la sección de API
-  provisional de `AGENTS.md` al registro de "superficie cerrada" de
-  `process-wal`; valorar si este plan operativo sigue aportando valor.
+El siguiente trabajo de producto por prioridad, no por dependencia técnica.
+`v0.2.1` ya está publicada, pero
+[A6 y A10](./contract.md#extension-conformance-questions) siguen abiertas en
+la versión medida del SDK. F12 no se inicia hasta pasar la puerta de readiness
+descrita abajo.
+
+### Límite: seguir una task, no implementar un cliente MCP
+
+El candidato es `mcp-durable-tasks/client`, un driver web-standard y sin
+dependencias de runtime que empieza cuando el host ya tiene un
+`CreateTaskResult` o un `taskId`. No abre conexiones, no hace `tools/call`, no
+negocia protocolo, no construye headers, no autentica y no importa el SDK
+oficial. Esas responsabilidades permanecen en el cliente MCP del host.
+
+El driver recibe un adaptador estructural normalizado con tres operaciones:
+
+```ts
+interface TaskClientAdapter {
+  getTask(
+    taskId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<GetTaskResult>;
+  updateTask(
+    taskId: string,
+    inputResponses: InputResponses,
+    options?: { signal?: AbortSignal },
+  ): Promise<UpdateTaskResult>;
+  cancelTask(
+    taskId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<CancelTaskResult>;
+}
+```
+
+La firma pública exacta se asienta en `api.md` antes del código, pero el
+comportamiento queda cerrado aquí:
+
+- `follow()` parte de un `CreateTaskResult`; `resume()` recibe un `taskId` y
+  hace un `tasks/get` inmediato. El seed solo contiene el `Task` base:
+  nunca se devuelve como resultado detallado. Si llega `working`, el primer
+  get respeta su hint; si llega ya `input_required` o terminal, el get es
+  inmediato para obtener `inputRequests`, `result` o `error`. Ambos métodos
+  resuelven con la variante terminal completa (`completed`, `failed` o
+  `cancelled`), sin reinterpretar `error` ni extraer un resultado que pierda
+  metadatos.
+- Solo hay un `tasks/get` en vuelo por task. El siguiente delay empieza después
+  de recibir la respuesta anterior y usa el `pollIntervalMs` más reciente.
+  Cuando no hay hint, el default es 1.000 ms; un mínimo configurable, 50 ms por
+  defecto, impide hot loops. El driver puede esperar más que el hint, nunca
+  menos que `max(hint, minimumPollIntervalMs)`.
+- `resolveInput({ taskId, key, request, signal })` es responsabilidad del host.
+  Se invoca una sola vez por key durante una ejecución del driver. Cada promesa
+  queda memoizada; las respuestas asentadas en el mismo turno de microtasks se
+  envían en un único `tasks/update`, y las pendientes permiten updates
+  parciales sin volver a presentar el mismo request. Mientras espera input no
+  hace polling vacío. Si una key ya respondida reaparece en una ronda posterior,
+  falla como violación de la unicidad vitalicia de la extensión.
+- Un `AbortSignal` antes o durante el seguimiento aborta waits y requests,
+  envía como máximo un `tasks/cancel` si ya se conoce el id y termina con la
+  razón original después del acknowledgement. Si `cancelTask` falla, propaga
+  ese error operativo; la razón original sigue en `signal.reason`. No espera a
+  observar `cancelled`, porque la extensión no lo garantiza.
+- Un error de adaptador, resolver o validación se propaga sin retry ni backoff.
+  El `taskId` sigue siendo reanudable por el host. No hay persistencia cliente,
+  suscripciones ni deduplicación durable después de reiniciar el proceso.
+- El driver valida cada seed y respuesta recibida; un adaptador tipado no
+  convierte tráfico no confiable en un valor válido. No acepta métodos de la
+  task vocabulary retirada de `2025-11-25`.
+
+El paquete no incluye un adaptador específico del SDK. La documentación podrá
+mostrar uno cuando la API pública del SDK permita obtener el
+`CreateTaskResult` y enviar los tres métodos sin `transport.send()`, miembros
+protegidos, casts ni imports internos.
+
+### Puerta de readiness de F12
+
+Antes de cambiar el estado a `ready`:
+
+1. Releer spec, schema, SDK instalado e issues A6/A10; actualizar las
+   reproducciones fijadas, sin reescribir su evidencia histórica.
+2. A10 debe estar resuelta upstream **o** debe existir necesidad de usuario
+   documentada que acepte explícitamente que el host inyecte el seed obtenido
+   por otra vía pública. El driver no intercepta el response funnel del SDK.
+3. A6 debe estar resuelta upstream **o** la integración usa la costura HTTP de
+   host ya verificada. Ningún workaround de servidor entra en `/client`.
+4. Probar una integración real de `tools/call` → `CreateTaskResult` →
+   `working` → `input_required` → `completed` con APIs públicas. Un fake prueba
+   el algoritmo, no la compatibilidad con el SDK.
+5. Registrar en `contract.md` cuál de las dos rutas abrió cada gate antes de
+   crear el worktree.
+
+```text
+Work Item: F12.1
+Tipo: feat
+Slug: task-client-driver
+Base: main
+Estado: blocked-by-readiness-gate
+Orca identity: feat/f12-1-task-client-driver
+Relationship: no-parent
+```
+
+Una sola Work Item y un solo PR. Sus tracks obligatorios son:
+
+- **F12.1a — Contrato y validación.** Superficie `/client`, adaptador
+  estructural, shapes runtime y errores; main sigue sin dependencias.
+- **F12.1b — Polling.** Timers falsos, intervalos dinámicos, ausencia de
+  overlap, seed base frente a respuesta detallada, terminalidad, resume y
+  abort durante espera/request.
+- **F12.1c — Input rounds.** Dedupe por key, respuestas parciales, varias keys
+  resueltas en distinto orden y en el mismo turno, reaparición ilegal de una
+  key ya respondida, resolver que falla y cancelación con prompts pendientes.
+- **F12.1d — Integración.** SDK real sobre HTTP, headers/routing propiedad del
+  SDK/host, resultados `complete` y `task`, A6 y A10 cubiertas por regresiones.
+- **F12.1e — Rendimiento y empaquetado.** Una ejecución retiene O(keys vistas)
+  y O(1) estado de polling; no acumula timers, listeners ni requests tras
+  terminal/abort. Tests con timers falsos recorren 10.000 polls sin tiempo real,
+  verifican una sola request y un solo timer activos, y cubren la carrera entre
+  terminalidad y abort sin enviar un cancel tardío. ESM/CJS, tarball sin SDK
+  instalado, cobertura y matriz completa.
+- **F12.1f — Docs y auditoría.** README, `api.md`, `contract.md`, este plan y
+  changelog en el mismo PR. Auditoría independiente antes de merge; cada
+  defecto confirmado empieza por un test rojo.
+
+F12 y F13 no se desbloquean entre sí. El orden es una decisión de producto con
+una salida explícita: si F12 sigue bloqueada cuando F13 cumple su readiness y
+hay necesidad real del store, un cambio documental separado puede reasignar
+SQLite al siguiente minor. Los números de versión expresan orden de entrega,
+no reservas irrevocables.
+
+---
+
+## Fase 13 — `NodeSqliteTaskStore` · v0.4.0 preferida · tras F12 por defecto
+
+No es una familia de conectores. Es **un** store de primer partido que cubre
+el único hueco local que `WalTaskStore` deja a propósito.
+
+### El hueco que cubre, y el que no
+
+`WalTaskStore` ya da durabilidad local a un proceso y un disco. Quien despliega
+varias réplicas detrás de un balanceador **sigue** implementando `TaskStore`
+sobre su base compartida y pasando el kit de conformidad. Ese caso —Postgres,
+Redis, D1, Turso remoto, libSQL— no es un hueco de este repositorio: es el
+motivo por el que el kit se publica.
+
+El hueco cubrible aquí es más estrecho, y es real:
+
+1. **Más de un proceso sobre el mismo disco.** Dos writers en un directorio
+   de `process-wal` corrompen el log. SQLite sí arbitra writers.
+2. **Una base inspectable** con herramientas ordinarias, no un log propio. En
+   WAL existen sidecars `-wal` y `-shm` mientras hay conexiones activas; no se
+   promete un único fichero físico en todo momento.
+3. **Sin peer `process-wal` y sin addon nativo.** `node:sqlite` es builtin
+   [desde Node 22.13, sin flag](https://nodejs.org/download/release/v22.13.0/docs/api/sqlite.html).
+
+Eso complementa a `WalTaskStore`; no lo sustituye. `WalTaskStore` sigue siendo
+el almacén de un stdio de un solo proceso que quiere el contrato de
+`process-wal`. `NodeSqliteTaskStore` es el de un host local que necesita CAS
+entre procesos en la misma máquina. En su primera versión posee un fichero
+dedicado: no se inyecta una conexión de la aplicación y no cambia el journal
+mode de una base ajena.
+
+Sigue siendo disco local. **No** resuelve la afinidad del worker (A9): el CAS
+protege el registro; la promesa de `requestInput()` y el `AbortSignal` siguen
+siendo del proceso que ejecuta el trabajo. Un SQLite compartido sin sticky
+routing no convierte esto en un motor de colas.
+
+### Fuera de alcance — no se reabre en esta fase
+
+- `better-sqlite3` y cualquier addon nativo.
+- `@libsql/client`, Turso, un `TursoTaskStore`, réplicas embebidas o Turso
+  Sync. Quien los quiera escribe cinco métodos y corre
+  `mcp-durable-tasks/testing`.
+- Postgres, Redis, D1 u otro driver de comunidad.
+- Un executor SQL genérico, una abstracción `SqlTaskStore`, o subpaths
+  `/postgres` / `/libsql` / `/redis`.
+- Autenticación, URLs, construcción de clientes o ownership de transporte.
+- Subir el floor de Node del entry principal. `/sqlite` documenta 22.13+;
+  `mcp-durable-tasks` y `/testing` siguen en Node 22.
+
+### Superficie cerrada antes de implementar
+
+La API prevista es deliberadamente pequeña:
+
+```ts
+new NodeSqliteTaskStore({
+  file: "./data/tasks.sqlite",
+  busyTimeoutMs: 250,
+  maxEntryBytes: 8 * 1024 * 1024,
+  now: Date.now,
+});
+```
+
+- `file: string` es obligatorio. El store abre y posee su conexión. Rechaza
+  cadena vacía, `:memory:` y bases temporales; el directorio padre debe existir.
+- Varias instancias y procesos pueden abrir el mismo fichero **en el mismo
+  host**. Compartirlo por NFS/SMB, serverless efímero o varios hosts es
+  configuración no soportada.
+- `busyTimeoutMs` es un entero finito `>= 0`, default 250 ms. Se aplica mediante
+  [`PRAGMA busy_timeout`](https://sqlite.org/pragma.html#pragma_busy_timeout),
+  disponible en Node 22.13; no se usa la opción de constructor añadida en
+  22.16. Agotarlo propaga el error SQLite original, no un
+  `ConcurrentUpdateError` ni un retry oculto.
+- `maxEntryBytes` mide UTF-8 de `record_json`, default 8 MiB. Se valida antes de
+  abrir una transacción y reutiliza `TaskEntryTooLargeError` y su código
+  estable. El mensaje de ese error deja de nombrar solo a `WalTaskStore` en el
+  mismo cambio. Es un límite del encoding de cada store: el envelope de WAL y
+  la fila SQLite no son byte a byte portables en el borde; los consumidores
+  que alternen stores deben dejar margen.
+- `now` es la costura de reloj para TTL y tests. `close()` es idempotente y solo
+  cierra la conexión que el store posee.
+
+[`DatabaseSync` ejecuta sus APIs de forma síncrona](https://nodejs.org/download/release/v22.13.0/docs/api/sqlite.html#class-databasesync)
+y bloquea el event loop. Los métodos conservan el `Promise` exigido por
+`TaskStore`, pero el trabajo SQLite ocurre síncronamente antes de resolverlo;
+no se presenta como off-thread. El timeout corto y el límite de payload acotan
+los dos bloqueos controlables, y la documentación recomienda `WalTaskStore` o
+un store remoto cuando esa sincronía no sea aceptable.
+
+### Contrato de durabilidad que hay que escribir, no inferir
+
+El mismo listón que `WalTaskStore` en [`durability.md`](./durability.md). Antes
+de implementar, asentar y documentar:
+
+- Fichero dedicado con tablas privadas `_mcp_durable_tasks_records` y
+  `_mcp_durable_tasks_meta`. No usar `PRAGMA user_version`.
+- Snapshot canónico en `record_json` más escalares indexados (`task_id`,
+  `version`, `expires_at`). `expires_at` usa `REAL` para preservar el contrato
+  numérico actual; índice dedicado para `sweep`. Sin API de enumeración (I7).
+- Creación del schema v1 y cada migración futura explícita bajo
+  `BEGIN IMMEDIATE`, con rollback ante error y rechazo de versiones futuras
+  desconocidas. La primera release solo implementa vacío -> v1: no incorpora
+  un framework genérico para migraciones que aún no existen. Dos procesos que
+  abren a la vez nunca observan medio schema.
+- Al abrir, fijar primero el busy timeout, ejecutar y verificar después
+  `journal_mode=WAL` y `synchronous=FULL`, y solo entonces migrar y preparar
+  statements. [WAL es una propiedad persistente](https://www.sqlite.org/wal.html#persistence_of_wal_mode)
+  del fichero; por eso el fichero es propiedad de este store.
+- `create` no resuelve hasta después del commit (I1). `get` no muta (I3).
+- Toda escritura abre `BEGIN IMMEDIATE`. `update` normaliza y mide antes de esa
+  transacción, y escribe `record_json`, `version` y `expires_at` en un único
+  `UPDATE ... WHERE task_id = ? AND version = ?`. Si afecta cero filas, consulta
+  el estado actual **dentro de la misma transacción**, hace rollback y construye
+  `ConcurrentUpdateError`: versión viva exacta si existe, `undefined` si falta
+  o expiró. Así otro writer no puede cambiar el diagnóstico entre el CAS y la
+  lectura. `SQLITE_BUSY` nunca se disfraza de CAS perdido.
+- `sweep` borra caducadas y devuelve solo el recuento.
+- Cada operación reutiliza statements preparados; `get`/`update` usan la
+  primary key y `sweep` el índice de expiración. No hay scan para una lectura
+  por id ni prepare por operación.
+- Documentar la frontera exacta proceso-crash vs pérdida de corriente y que
+  WAL + `synchronous=FULL` no corrige un filesystem que incumpla flush/locking.
+- I8 se vuelve específico por store: `WalTaskStore` sigue siendo
+  single-writer; el store SQLite documenta writers concurrentes en el mismo
+  fichero local. Las [fronteras de proceso](./contract.md#process-boundaries)
+  se reescriben en el mismo cambio, no como nota a posteriori.
+
+`node:sqlite` sigue en desarrollo activo en Node 22. El subpath usa solo APIs
+presentes en 22.13. Si una API se mueve antes de 1.0, es un breaking menor
+pre-1.0 con entrada de changelog, no una sorpresa.
+
+### Work Item y puerta de readiness
+
+No se invoca `$orca-start-work` hasta que se cumpla una de estas rutas y F13.1
+se marque `ready` en este plan:
+
+1. F12.1 está publicada como `0.3.0`; o
+2. F12 sigue bloqueada, existe una necesidad demostrada de SQLite y un cambio
+   documental separado reasigna `NodeSqliteTaskStore` al siguiente minor.
+
+La segunda ruta no cambia el orden en silencio: actualiza `contract.md`,
+`AGENTS.md`, este plan y el número objetivo antes de crear el worktree.
+
+```text
+Work Item: F13.1
+Tipo: feat
+Slug: node-sqlite-store
+Base: main
+Estado: blocked-by-strategic-readiness-gate
+Orca identity: feat/f13-1-node-sqlite-store
+Relationship: no-parent
+```
+
+F13.1 es la única Work Item. Los tracks F13.1a–F13.1f viven en el mismo
+worktree y salen en el mismo cambio. Un `/sqlite` sin crash tests, sin kit en
+verde o con docs que describan un contrato distinto al código no se fusiona.
+
+- **F13.1a — Superficie y motor.** Estrechar el non-goal de community stores en
+  [`contract.md`](./contract.md#non-goals) a la excepción `node:sqlite`.
+  Añadir `mcp-durable-tasks/sqlite` sin tocar dependencias del entry
+  principal. Schema, migración, snapshot canónico, CAS, TTL, `sweep`,
+  `close` idempotente. `src/sqlite.ts` puede importar `node:*`; `src/index.ts`
+  y `src/testing.ts` siguen sin Node built-ins.
+  _Hecho cuando:_ el store crea, lee, actualiza con CAS y barre sobre un
+  fichero real, prueba el borde exacto y Unicode multibyte de `maxEntryBytes`,
+  rechaza schema futuro sin escribir, rechaza operaciones después de `close`,
+  y el tarball exporta `/sqlite` en ESM y CJS.
+- **F13.1b — Kit de conformidad.** Ejecutarlo contra este store, con costuras
+  de reloj y reopen, **sin checks saltados**. El kit pasa contra los tres stores
+  incluidos antes de etiquetar.
+  _Hecho cuando:_ `runTaskStoreConformance` está verde aquí igual que en
+  memoria y WAL, y un store roto a propósito sigue fallando.
+- **F13.1c — Concurrencia real.** Dos conexiones y, aparte, dos
+  procesos contra el mismo fichero. CAS perdido, read-after-write y
+  cold-open simultáneo, además de dos escenarios coordinados por IPC: lock
+  liberado antes del timeout y lock retenido hasta obtener `SQLITE_BUSY`.
+  Windows es target de primer orden para locking, checkpoints y sidecars. Nada
+  de sleeps.
+  _Hecho cuando:_ hay tests que fallan si el segundo writer corrompe o
+  silencia el primero, y la versión `actual` del CAS perdido es exacta bajo
+  contención; no un comentario que dice que WAL mode basta.
+- **F13.1d — Crash tests.** A la altura de la Fase 6: hijo real, `SIGKILL` real,
+  puntos de sincronización explícitos, contra `dist/`. Cubrir creación
+  durable, input parked, terminal con payload y reopen tras kill.
+  _Hecho cuando:_ I8 está demostrada para este store igual que para
+  `WalTaskStore`, con la frontera de `synchronous=FULL` escrita en
+  `durability.md`.
+- **F13.1e — Rendimiento y empaquetado.** Statements preparados una vez y
+  `EXPLAIN QUERY PLAN` demostrando primary key para `get`/`update` e índice de
+  expiración para `sweep`; un dataset grande de test no cambia esos planes.
+  Un stress de cuatro procesos, cien mutaciones confirmadas sobre una task
+  propia por proceso y sin retries debe conservar las cuatro versiones finales
+  sin `SQLITE_BUSY`; aparte, el test de lock retenido demuestra el error al
+  agotar el timeout. Límite de payload y timeout prueban los límites sin un gate
+  de milisegundos dependiente del runner. Un benchmark reproducible puede
+  informar latencias, pero ninguna cifra entra en docs ni bloquea CI hasta
+  medirse de forma estable.
+
+  Añadir `exports`, `attw --profile node16`, `publint --strict`. El smoke del
+  tarball sin `process-wal` sigue demostrando que `.` y
+  `/testing` no lo necesitan; `/sqlite` se importa en ese smoke porque es
+  builtin de Node, no un peer. La matriz CI (Linux/macOS/Windows × 22/24, más
+  Node Current informativo) ejecuta los tests nuevos. Además, una pierna
+  `sqlite-floor` fija Node 22.13 en Linux/macOS/Windows: `22.x` actual no prueba
+  el floor ni impide usar por accidente una API añadida en 22.16.
+  _Hecho cuando:_ `pnpm lint:package` pasa y un consumer que no instaló
+  `process-wal` puede `import` de `/sqlite`.
+
+- **F13.1f — Docs y auditoría.** README (tercer store, cuándo usar cuál),
+  `api.md`, `contract.md` (superficie, I8, fronteras de proceso, non-goals),
+  `durability.md`, este plan, `CHANGELOG.md`. Auditoría independiente antes de
+  merge, no solo antes del tag; cada hallazgo se verifica con un test que falla
+  antes de corregirlo. El editor abre el PR; el auditor revisa el mismo
+  worktree sin editar código de producto.
+
+### Qué se decidió no hacer, para que no vuelva como “F13.2”
+
+Una propuesta anterior contemplaba un `LibsqlTaskStore` de cliente inyectado
+después de auditar SQLite. Se descarta para `0.4.0` y no queda como siguiente
+paso implícito. Un cliente remoto introduce CAS ambiguo de red, credenciales,
+un servicio reproducible y un contrato de durabilidad que este repositorio no
+puede demostrar con `SIGKILL` local. Eso es un store de comunidad, y el kit
+existe para eso.
+
+---
+
+## Después — v1.0.0
+
+Cuando las
+[preguntas de conformidad](./contract.md#extension-conformance-questions)
+estén cerradas o registradas como decisiones explícitas del paquete, y
+`TaskStore` / `TaskLifecycle` congeladas. Entonces: reescribir la sección de
+API provisional de `AGENTS.md` al registro de “superficie cerrada” de
+`process-wal`; valorar si este plan operativo sigue aportando valor. No se
+etiqueta `1.0.0` para “completar” F13.
 
 ---
 
 ## Orden de ataque
 
+Cómo se construyó `v0.1.0`–`v0.2.0` (historia, no el siguiente sprint):
+
 ```
 F1 ──▶ R2 ──▶ F3 ──▶ F4 ──▶ F5 ──┬─▶ F6 ──▶ F8 ──▶ F9 ──▶ F10
        (schema  (motor) (stores) (kit) │  (crash)  (docs) (demo)  (issue)
-        antes                          └─▶ F7 (costura SDK, en paralelo)
+        antes                          └─▶ F7 (investigación SDK, sin feature)
         que el
         motor)
 ```
 
-Dos reglas de secuencia que no son negociables:
+Dos reglas de secuencia de esa etapa, que siguen siendo ciertas:
 
 1. **R2 antes que F3.** El schema decide la forma de los tipos; el motor se
    escribe contra tipos ya validados.
 2. **F10 no espera a F11.** Si en la semana 3 el artículo no está, el issue se
    manda igual. Al revés no: un artículo sin el issue detrás es marketing.
+
+Lo que queda, con la prioridad preferida y su escape explícito:
+
+```
+F12 (v0.3.0 preferida, cliente, gated) ──▶ F13 (v0.4.0 preferida, node:sqlite)
+                  │
+                  └─ si sigue bloqueada + F13 está ready: decisión contractual
+                     separada, F13 ocupa el siguiente minor y F12 se reprograma
+F11 (artículo) es distribución y puede ir en paralelo; no bloquea F12.
+F7 está cerrada sin feature; A6 se vuelve a medir como gate de F12.
+```
+
+SQLite no se adelanta por novedad ni como palanca de audiencia. Solo cambia el
+orden preferido si F12 está realmente bloqueada, F13 satisface su puerta y el
+contrato público se actualiza antes de crear el worktree.

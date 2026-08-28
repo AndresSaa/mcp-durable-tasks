@@ -26,17 +26,22 @@ reasonable ideas will be declined, and it is not personal:
 - **Zero runtime dependencies on the main entry point.** `process-wal` is an
   optional peer of the `/wal` entry point only. Anyone who wants nothing but
   `MemoryTaskStore` must not be made to install it.
-- **No community stores in this repository.** A Redis, Postgres, SQLite or D1
-  `TaskStore` is welcome — as your own package. The interface is five methods
-  and `mcp-durable-tasks/testing` gives you the test suite before you write a
+- **No community stores in this repository.** Redis, Postgres, D1, Turso,
+  libSQL, `better-sqlite3` and any other driver package stay out. A
+  first-party store on Node's built-in `node:sqlite` is the only planned
+  exception and owns a dedicated local file. SQLite stores using any other
+  driver are welcome as their own packages before and after it ships. The
+  interface is five methods and
+  `mcp-durable-tasks/testing` gives you the test suite before you write a
   line. Publish it and open an issue, and it gets linked from the docs.
 - **No framework adapters or workflow-engine bridges.** Not Express, Hono,
   Fastify, Next or Nitro; not LangGraph, Temporal, Inngest or Vercel Workflow.
 - **No retries, backoff, dead-letter, priorities, scheduling or cron.** This is
   not a queue.
-- **No transport, auth or version negotiation.** That is the SDK's job. The one
-  exception is the small compatibility seam the SDK's protocol-era gate forces
-  on us, and it stays as small as that gate requires.
+- **No transport, auth or version negotiation.** That is the SDK's job. The
+  planned client-side exception only follows an injected task handle through a
+  structural adapter; it does not intercept the SDK or own its compatibility
+  seam. A6 workarounds remain in the host.
 - **No CLI, dashboard or replay viewer.**
 - **No `2025-11-25` task vocabulary.** That revision's tasks are a different,
   retired design.

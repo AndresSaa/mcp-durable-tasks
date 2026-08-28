@@ -37,10 +37,11 @@ answer the HTTP requests in middleware before `createMcpHandler`, as the
 crash-recovery example does, or rename them below `Protocol`, at the
 `transport.onmessage` seam.
 
-So the engine stays pure state. `v0.2.0` does **not** ship a compatibility seam;
-hosts choose their own narrow middleware or transport workaround. If the
-package adds one after the upstream answer to A6, it must remain narrow rather
-than growing into transport ownership, authentication or version negotiation. See
+So the engine stays pure state. The package does **not** ship a compatibility
+seam; hosts choose their own narrow middleware or transport workaround. A6 may
+remove that host workaround upstream, but it does not create a package feature
+by itself. The planned `/client` follower starts after a task handle and never
+owns this seam, transport, authentication or version negotiation. See
 `docs/contract.md#typescript-sdk-v2-compatibility`.
 
 ## Context you must not work from memory on
@@ -240,12 +241,17 @@ proposal to make.
 ## Prohibited without prior discussion
 
 Everything in [`docs/contract.md#non-goals`](./docs/contract.md#non-goals) — a
-second package or monorepo, any framework adapter or workflow-engine bridge, a community store
-(Redis/Postgres/SQLite/D1) inside this repo, `2025-11-25` task vocabulary, a
-CLI or dashboard, retries/backoff/scheduling, touching `process-wal` itself,
-transport/auth/version-negotiation (that's the SDK's job), or `mcp-ext-tasks`
-as a name. If you're about to propose one of these, stop and ask instead of
-resolving it yourself.
+second package or monorepo, any framework adapter or workflow-engine bridge, a
+community store (Redis/Postgres/D1/libSQL/Turso/`better-sqlite3`) inside this
+repo, a generic MCP client or SDK compatibility layer, `2025-11-25` task
+vocabulary, a CLI or dashboard, retries/backoff/scheduling, touching
+`process-wal` itself, transport/auth/version-negotiation (that's the SDK's
+job), or `mcp-ext-tasks` as a name. The preferred sequence is the narrow
+task-client follower in `v0.3.0`, then the first-party `node:sqlite` store in
+`v0.4.0`; either starts only through its readiness gate in the execution plan.
+Changing that order requires a prior contract-only decision, never an implicit
+implementation choice. Do not widen either exception. If you're about to
+propose one of these, stop and ask instead of resolving it yourself.
 
 ## Spec ambiguities — how they get documented
 
@@ -268,9 +274,13 @@ answers it:
 - Unlike process-wal (stable at 1.x), this package starts at `0.1.0`. Per the
   [version contract](./docs/contract.md#version-contract): `0.1.0` (engine +
   both stores + conformance kit + crash tests, first manual npm publication) →
-  `0.2.0` (crash-test demo, first OIDC/provenance publication) → `0.3.0`
-  (candidate, client driver — not before `0.2.0` ships) → `1.0.0` once the open
-  conformance questions are closed and `TaskStore`/`TaskLifecycle` are frozen.
+  `0.2.0` (crash-test demo, first OIDC/provenance publication) → preferred
+  `0.3.0` (narrow task-client follower, gated by a fresh A6/A10 decision) →
+  preferred `0.4.0` (first-party `node:sqlite` store; not a SQL connector
+  family) → `1.0.0` once the open conformance questions are closed and
+  `TaskStore`/`TaskLifecycle` are frozen. If the client remains blocked, the
+  version contract permits a documented pre-worktree reassignment; never infer
+  one from this summary.
 - Before `1.0.0`, a breaking change is a minor bump with a clear changelog
   entry, not a major — normal pre-1.0 semver. This inverts process-wal's
   "any breaking change is a major" rule, which only applies to a package that

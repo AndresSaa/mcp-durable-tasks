@@ -206,10 +206,12 @@ Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
 - The output codec defaults a missing `resultType` to `"complete"` even for a
   `2026-07-28` server. It accepts and preserves an explicit `"task"` value.
 
-This package emits every discriminator explicitly, but it does **not** ship the
-transport rename seam in `v0.1.0`. A host using this SDK version still needs its
-own narrowly scoped workaround. The package must not grow that workaround into
-transport ownership, authentication or version negotiation.
+This package emits every discriminator explicitly, but it does **not** ship a
+transport rename seam. A host using this SDK version still needs its own
+narrowly scoped workaround. A6 may make that workaround unnecessary upstream;
+it does not add an SDK compatibility layer here. The planned `/client` follower
+starts after the host has a task handle and must not grow into transport
+ownership, authentication or version negotiation.
 
 ## Extension conformance questions
 
@@ -259,8 +261,25 @@ question without a package change.
   trusted publishing, OIDC and provenance.
 - `0.2.1`: documentation-only maintenance patch that republishes the corrected
   README to npm; no engine, API or dependency changes.
-- `0.3.0`: optional client driver candidate, held until A6/A10 receive upstream
-  clarification or a demonstrated user need justifies designing around them.
+- `0.3.0` (preferred next feature): optional
+  `mcp-durable-tasks/client` task follower. It starts from an injected
+  `CreateTaskResult` or task ID and a structural adapter for `tasks/get`,
+  `tasks/update` and `tasks/cancel`; it does not issue `tools/call`, import an
+  MCP SDK, own transport/authentication, or negotiate a protocol version. Its
+  readiness gate requires a fresh A6/A10 measurement and either public SDK
+  support or a documented user need that accepts the injected boundary.
+- `0.4.0` (preferred following feature): first-party `NodeSqliteTaskStore` on
+  `mcp-durable-tasks/sqlite`, using Node's built-in `node:sqlite` (subpath
+  requires Node 22.13+; the main entry point stays on Node 22). It owns a
+  dedicated local file and complements `WalTaskStore` with multi-process local
+  CAS; it is not a remote, hosted or application-database adapter. The
+  community-store non-goal narrows in that release to this one exception.
+- The `0.3.0`/`0.4.0` assignment is delivery order, not an irrevocable version
+  reservation. If the client gate remains blocked while SQLite has a
+  demonstrated need and is otherwise ready, a separate contract-only decision
+  may assign SQLite to the next minor and reschedule the client driver. That
+  decision updates this contract, `AGENTS.md` and the execution plan before a
+  feature worktree exists; implementation never changes the order implicitly.
 - `1.0.0`: open extension questions are closed or recorded as explicit package
   decisions, and `TaskStore`/`TaskLifecycle` become frozen semver contracts.
 
@@ -273,7 +292,14 @@ Without prior maintainer discussion, this repository does not add:
 
 - a second package, monorepo or package family;
 - framework adapters or workflow-engine bridges;
-- Redis, Postgres, SQLite, D1 or other community stores in this repository;
+- Redis, Postgres, D1, `better-sqlite3`, libSQL, Turso, or other community
+  stores in this repository. A first-party store on Node's built-in
+  `node:sqlite` is the only planned exception: a dedicated local file, no
+  driver package, no URLs or credentials. SQLite adapters using any other
+  driver remain community packages before and after that release;
+- a generic MCP client, transport wrapper or SDK compatibility layer. The
+  optional task follower described in the version contract is the only planned
+  client-side exception and starts after the host has a task handle;
 - the retired `2025-11-25` task vocabulary;
 - queues, retries, backoff, priorities, scheduling, cron or dead-letter logic;
 - a CLI, dashboard or replay viewer;
