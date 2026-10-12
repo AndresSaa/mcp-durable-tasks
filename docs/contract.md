@@ -218,16 +218,55 @@ registered **with an explicit schema**
 gate. Typed registration and `fallbackRequestHandler` remain era-gated for those
 two names.
 
-This repository has not yet re-measured that path end to end; the repository
-still pins 2.0.0, and the example and reproductions migrate in a separate
-change. Until then, the 2.0.0 measurement below is the evidence this repository
-holds, and the host workaround in the crash-recovery example remains as
-written.
+### Measured with 2.3.1
+
+Measured on 12 October 2026 with `@modelcontextprotocol/server` 2.3.1,
+`@modelcontextprotocol/client` 2.3.1 and `@modelcontextprotocol/node` 2.1.1
+(Node 24.21.0, Windows 11), against a `2026-07-28` server. The reproduction is
+[`examples/conformance-reproductions/era-gate.mts`](../examples/conformance-reproductions/era-gate.mts);
+every request carries `MCP-Protocol-Version`, `Mcp-Method` and
+`Mcp-Name: <params.taskId>`.
+
+| Registration                        | `tasks/get` | `tasks/update`                  | `tasks/cancel` |
+| ----------------------------------- | ----------- | ------------------------------- | -------------- |
+| explicit schema `(method, schemas)` | served      | served                          | served         |
+| typed `(method, handler)`           | `-32601`    | registration throws `TypeError` | `-32601`       |
+| `fallbackRequestHandler` only       | `-32601`    | served by the fallback          | `-32601`       |
+
+- The `-32601` answers come with HTTP 404 and the registered handler never
+  runs. Typed registration of `tasks/update` is refused at registration time
+  because the name is not a spec method in any bundled era.
+- The HTTP entry validates `Mcp-Name` against `params.taskId` for all three
+  methods before dispatch. A task request without the header is answered
+  `-32020` (HTTP 400) and never reaches the era gate, so a probe that omits it
+  measures the header check, not A6. That is why the 2.0.0 reproduction, which
+  sent no `Mcp-Name`, stopped measuring A6. The same check is present in the
+  2.1.0 and 2.2.0 tarballs by source inspection; 2.0.0 did not apply it.
+- The SDK lifts a top-level `params.inputResponses` out of every
+  `2026-07-28` request as multi-round-trip material. A schema-registered
+  `tasks/update` handler receives `params` without it and finds the
+  responses on `ctx.mcpReq.inputResponses`. The SDK first drops entries that
+  are not bare response objects (for example a `{ method, result }` wrapper)
+  and lists their keys in `ctx.mcpReq.droppedInputResponseKeys`.
+- The server encode step stamps `resultType: "complete"` on any result whose
+  handler omits it, `tools/call` included, and adds
+  `_meta["io.modelcontextprotocol/serverInfo"]`. It keeps an explicit
+  `"task"` on `tools/call`, where it also adds an empty `content` array.
+- The 2.3.1 client rejects a `2026-07-28` result without `resultType` as
+  `INVALID_RESULT`; the absent-means-complete bridge now applies only to
+  earlier-revision servers. It still rejects `resultType: "task"` from
+  `tools/call` as `UNSUPPORTED_RESULT_TYPE`. See A10.
+
+The crash-recovery example serves all three methods through explicit-schema
+handlers on `server` `^2.3.0`, with no HTTP middleware and no transport
+rewrite.
 
 ### Measured with 2.0.0
 
-Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
-`2026-07-28` server:
+Historical. Measured on 10 August 2026 with `@modelcontextprotocol/server`
+2.0.0 and a `2026-07-28` server; the reproduction is kept as published at the
+`v0.2.1` tag. The request carried no `Mcp-Name` header, which 2.0.0 did not
+check:
 
 - `tasks/get` and `tasks/cancel` are rejected with `-32601` before registered
   handlers or `fallbackRequestHandler` run.
@@ -246,28 +285,52 @@ Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
   `2026-07-28` server. It accepts and preserves an explicit `"task"` value.
 
 This package emits every discriminator explicitly, but it does **not** ship a
-transport rename seam or any SDK compatibility layer. A host on an SDK version
-without the upstream fix still needs its own narrowly scoped workaround; a host
-on 2.3.0 or later is expected to register the three methods with explicit
-schemas instead, subject to the pending re-measurement above.
+transport rename seam or any SDK compatibility layer. A host on a server
+version before 2.3.0 still needs its own narrowly scoped workaround; a host on
+2.3.0 or later registers the three methods with explicit schemas, as measured
+above.
+
+### Generated schema and the result discriminator
+
+Checked on 12 October 2026 by validating wire shapes with Ajv 8.17.1 (JSON
+Schema 2020-12) against two `ext-tasks` schemas. This was a one-off check, not
+a repository script; a reproducible check arrives when the fixtures are
+re-pinned to `2026-07-28`.
+
+- The stable `schema/2026-07-28/schema.json` (`ext-tasks` `main` at
+  `899c1bb`, last changed by `0d0a6bd` on 24 August 2026) contains no
+  `additionalProperties: false`. `GetTaskResult`, `UpdateTaskResult` and
+  `CancelTaskResult` require `resultType: "complete"`, and `CreateTaskResult`
+  requires `"task"`. Every engine output and every SDK 2.3.1 wire shape
+  above, with `_meta`, validates; a `tasks/get` result without `resultType`
+  does not.
+- The vendored `draft` fixture (`2c1425d`) closes each task variant with
+  `additionalProperties: false` and never mentions `resultType`, so it rejects
+  every `tasks/get` and task-creation result that carries the discriminator
+  the specification requires. Rejection of `resultType` is a property of that
+  pre-stable draft only.
+- Because the stable schema is open, it no longer rejects internal fields
+  such as `version` on a `tasks/get` result. The package's closed wire
+  projection is still its own guarantee; it is no longer one the schema
+  checks.
 
 ## Extension conformance questions
 
 These are questions for `modelcontextprotocol/ext-tasks`, not undocumented
 features to invent locally:
 
-| ID  | Status   | Question or settled interpretation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | Settled  | Missing client capability is `-32021`. Every occurrence in the stable `2026-07-28` specification uses it, and its error-handling section requires it for non-declaring clients issuing `tasks/get`, `tasks/update` or `tasks/cancel`, or requesting task notifications on `subscriptions/listen`. The extension overview page still shows `-32003`; that is an upstream documentation mismatch to report, not an open protocol question.                                                                                                                                           |
-| A2  | Settled  | Partial input response sets are legal; the server ignores non-live keys.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| A3  | Settled  | TTL remains anchored to `createdAt`; changing it does not restart the clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| A4  | Settled  | Cancellation is eventually consistent and does not force `cancelled`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| A6  | Settled  | Settled upstream in the SDK, not by a host rewrite: since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), `tasks/get` and `tasks/cancel` handlers registered with an explicit schema bypass the era gate. Typed registration and `fallbackRequestHandler` stay gated. Not yet re-measured in this repository; see [the compatibility profile](#typescript-sdk-v2-compatibility).                                                                                                                   |
-| A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. The answer fixes the semantics of the planned `0.3.0` change emitter.                                                                                                                                                                        |
-| A8  | Open     | The vendored fixtures are the pre-stable `draft` snapshot, where `InputRequest`/`InputResponse` degrade to unconstrained branches. Upstream closed [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) as completed, and the stable `2026-07-28` `schema.json` references concrete sampling, roots and elicitation definitions and requires `resultType` on results. Open here until the fixtures are re-pinned to `2026-07-28` and runtime input validation is checked against those definitions.                                                         |
-| A9  | Settled  | The extension defines the delivery mechanism: over Streamable HTTP the client sets `Mcp-Name` to `params.taskId` on `tasks/get`, `tasks/update` and `tasks/cancel`, so intermediaries can route every request for a task to the instance holding its state. Routing on it is host infrastructure; see [process boundaries](#process-boundaries).                                                                                                                                                                                                                                   |
-| A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? The bundled `@modelcontextprotocol/server` 2.3.1 source still declares that default on its result schemas; the codec path has not been re-measured. [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637) was closed as a duplicate of the SDK's open Tasks-extension tracking issue ([#2189](https://github.com/modelcontextprotocol/typescript-sdk/issues/2189)). |
+| ID  | Status   | Question or settled interpretation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Settled  | Missing client capability is `-32021`. Every occurrence in the stable `2026-07-28` specification uses it, and its error-handling section requires it for non-declaring clients issuing `tasks/get`, `tasks/update` or `tasks/cancel`, or requesting task notifications on `subscriptions/listen`. The extension overview page still shows `-32003`; that is an upstream documentation mismatch to report, not an open protocol question.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A2  | Settled  | Partial input response sets are legal; the server ignores non-live keys.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A3  | Settled  | TTL remains anchored to `createdAt`; changing it does not restart the clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| A4  | Settled  | Cancellation is eventually consistent and does not force `cancelled`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| A6  | Settled  | Settled upstream in the SDK, not by a host rewrite: since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), `tasks/get` and `tasks/cancel` handlers registered with an explicit schema bypass the era gate. Measured here on server 2.3.1 with the required `Mcp-Name` header: explicit-schema handlers serve all three methods; typed registration and `fallbackRequestHandler` still answer `-32601` for get and cancel. See [the compatibility profile](#typescript-sdk-v2-compatibility).                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. The answer fixes the semantics of the planned `0.3.0` change emitter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A8  | Open     | The vendored fixtures are the pre-stable `draft` snapshot, where `InputRequest`/`InputResponse` degrade to unconstrained branches. Upstream closed [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) as completed, and the stable `2026-07-28` `schema.json` references concrete sampling, roots and elicitation definitions and requires `resultType` on results. Open here until the fixtures are re-pinned to `2026-07-28` and runtime input validation is checked against those definitions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| A9  | Settled  | The extension defines the delivery mechanism: over Streamable HTTP the client sets `Mcp-Name` to `params.taskId` on `tasks/get`, `tasks/update` and `tasks/cancel`, so intermediaries can route every request for a task to the instance holding its state. Routing on it is host infrastructure; see [process boundaries](#process-boundaries).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? Re-measured on server and client 2.3.1: the server still stamps `"complete"` on any result without `resultType`, `tools/call` included, so a task handle that omits its discriminator reaches the client as an empty success; the client still rejects an explicit `"task"` from `tools/call`. The client alone no longer bridges an absent discriminator on `2026-07-28`; it rejects the result as invalid. The stable `2026-07-28` schema requires `resultType` and accepts it on `tasks/get`; only the pre-stable `draft` fixture rejects it ([details](#generated-schema-and-the-result-discriminator)). [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637) was closed as a duplicate of the SDK's open Tasks-extension tracking issue ([#2189](https://github.com/modelcontextprotocol/typescript-sdk/issues/2189)). |
 
 Before filing or updating the conformance report, re-read the current spec,
 SDK source and open `ext-tasks` pull requests. An upstream change may close a

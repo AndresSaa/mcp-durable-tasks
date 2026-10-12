@@ -39,15 +39,20 @@ era gate answers `-32601` to `tasks/get` and `tasks/cancel` before any
 handler — including `fallbackRequestHandler` — is consulted, because both names
 belong to the retired 2025-11-25 registry. `tasks/update` is registrable as an
 ordinary custom method, because SEP-2663 introduced it and no era claims the
-name. Two host-level escapes are verified on that version: answer the HTTP
+name. Two host-level escapes were verified on that version: answer the HTTP
 requests in middleware before `createMcpHandler`, as the crash-recovery example
-does, or rename them below `Protocol`, at the `transport.onmessage` seam.
+did until it moved to 2.3, or rename them below `Protocol`, at the
+`transport.onmessage` seam.
 
 A6 is now settled upstream: since `@modelcontextprotocol/server` 2.3.0
 (typescript-sdk#2599), handlers for those two names registered with an explicit
-schema are served. Typed registration and `fallbackRequestHandler` stay gated.
-This repository has not re-measured it yet; the example still pins 2.0.0 until
-its own migration.
+schema are served. Measured here on server 2.3.1 (12 October 2026): all three
+methods are served that way, while typed registration and
+`fallbackRequestHandler` still answer `-32601` for get and cancel. The probe
+must send `Mcp-Name: <taskId>`, or the SDK answers `-32020` before dispatch.
+The crash-recovery example now uses explicit-schema handlers with no
+workaround, and reads `tasks/update`'s responses from
+`ctx.mcpReq.inputResponses`, where the SDK moves them.
 
 So the engine stays pure state. The package does **not** ship a compatibility
 seam, and the upstream fix does not create a package feature either; a host on

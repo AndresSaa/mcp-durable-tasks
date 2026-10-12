@@ -270,7 +270,8 @@ output is also included below for text-only readers:
 ```
 
 It runs on every pull request, so it cannot quietly stop being true. The
-server also shows the simplest verified host workaround — see the next section.
+server also shows how to serve `tasks/*` through the official SDK — see the
+next section.
 
 ## The official SDK's era gate
 
@@ -287,14 +288,22 @@ are in the
 The gate is fixed upstream
 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599),
 closing [#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598)).
-From 2.3.0, a `tasks/get` or `tasks/cancel` handler registered with an explicit
-schema is served; typed registration and `fallbackRequestHandler` are still
-gated for those two names.
+Measured here with `@modelcontextprotocol/server` 2.3.1: handlers registered
+with an explicit schema, `setRequestHandler(method, schemas, handler)`, serve
+all three methods. Typed registration and `fallbackRequestHandler` still answer
+`-32601` for `tasks/get` and `tasks/cancel`.
 
-The crash-recovery example still pins 2.0.0 and therefore keeps the simplest
-host workaround verified for that version: it answers those two HTTP requests
-in middleware before `createMcpHandler`. Moving it to 2.3.0 with explicit-schema
-handlers, and re-measuring the fix here, is a separate pending change.
+The crash-recovery example requires `server` `^2.3.0` and registers the three
+methods that way, with no middleware and no transport rewrite. Two details it
+shows are easy to miss:
+
+- the SDK rejects a task request whose `Mcp-Name` header does not carry
+  `params.taskId` (`-32020`), before any handler runs; and
+- on a `2026-07-28` request the SDK moves `params.inputResponses` to
+  `ctx.mcpReq.inputResponses`, so a `tasks/update` handler reads it from there.
+
+A host on a server version before 2.3.0 still needs its own narrow workaround;
+the profile lists the two that were verified on 2.0.0.
 
 ## Writing your own store
 

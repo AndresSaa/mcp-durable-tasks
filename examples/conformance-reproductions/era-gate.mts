@@ -1,13 +1,27 @@
 /**
- * Reproduction: on a 2026-07-28 server, `tasks/get` and `tasks/cancel` answer
- * `-32601` before any registered handler runs — including
- * `fallbackRequestHandler` — while `tasks/update` dispatches normally.
+ * Measurement: which registration paths can serve `tasks/get`, `tasks/update`
+ * and `tasks/cancel` on a 2026-07-28 server, once the request carries the
+ * routing headers the extension requires.
  *
- * Reported as conformance question A6 in `docs/contract.md`.
+ * Conformance question A6 in `docs/contract.md`. On
+ * `@modelcontextprotocol/server` 2.0.0 the protocol-era gate answered `-32601`
+ * to `tasks/get` and `tasks/cancel` before any handler ran. That historical
+ * reproduction is kept at the `v0.2.1` tag. typescript-sdk#2599 (server 2.3.0)
+ * exempts those two names from the gate when their handler is registered with
+ * an explicit schema; this script measures that claim on the pinned version.
  *
- * **Frozen evidence, not a usage example.** The workarounds this demonstrates
- * the need for are described in the compatibility profile; nothing here is a
- * pattern to copy.
+ * Every task request sends `Mcp-Method` and `Mcp-Name: <params.taskId>`. Since
+ * server 2.2.0 the HTTP entry rejects a task request without `Mcp-Name` with
+ * `-32020` (HTTP 400) before dispatch, so a probe that omits it measures the
+ * header check, not the era gate. One control request shows that.
+ *
+ * It also records where a schema-registered `tasks/update` handler finds the
+ * extension's `inputResponses`: the SDK lifts that top-level field out of
+ * `params` on every 2026-07-28 request and passes it as
+ * `ctx.mcpReq.inputResponses`.
+ *
+ * **Evidence, not a usage example.** The versions are pinned exactly; the
+ * supported pattern lives in `../crash-recovery/server.mts`.
  *
  * Run: `node --experimental-strip-types era-gate.mts`
  */
@@ -17,71 +31,129 @@ import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 
 const REVISION = "2026-07-28";
+const TASK_METHODS = ["tasks/get", "tasks/update", "tasks/cancel"] as const;
+const TASK_ID = "t1";
+/** What `tasks/update` carries on the wire, per the extension. */
+const INPUT_RESPONSES = {
+  confirm: { action: "accept", content: { ok: true } },
+};
 
-/** Every method a registered handler was installed for, plus a control. */
-const METHODS = [
-  "tasks/get",
-  "tasks/update",
-  "tasks/cancel",
-  "x-durable-tasks/get",
-] as const;
+/** A permissive params schema: what is under test is dispatch, not validation. */
+const ANY_PARAMS = {
+  params: {
+    "~standard": {
+      version: 1,
+      vendor: "repro",
+      validate: (value: unknown) => ({ value }),
+    },
+  },
+} as never;
 
-/** The two names the retired 2025-11-25 registry still claims. */
-const BLOCKED = ["tasks/get", "tasks/cancel"] as const;
+type Mode = "schema" | "typed" | "fallback";
 
-const reached: string[] = [];
-const fellBackTo: string[] = [];
-
-function factory(): McpServer {
-  const mcp = new McpServer({ name: "a6-reproduction", version: "0.0.0" });
-  mcp.registerTool(
-    "noop",
-    { description: "keeps the server non-empty", inputSchema: {} },
-    async () => ({
-      content: [],
-    }),
-  );
-
-  for (const method of METHODS) {
-    mcp.server.setRequestHandler(
-      method,
-      // A permissive params schema: what is under test is dispatch, not
-      // validation.
-      {
-        params: {
-          "~standard": {
-            version: 1,
-            vendor: "repro",
-            validate: (value: unknown) => ({ value }),
-          },
-        },
-      } as never,
-      async () => {
-        reached.push(method);
-        return { handlerReached: method };
-      },
-    );
-  }
-
-  // A catch-all, to show which unknown methods can still be served.
-  mcp.server.fallbackRequestHandler = async (request: { method: string }) => {
-    fellBackTo.push(request.method);
-    return { viaFallback: request.method };
-  };
-
-  return mcp;
+interface Probe {
+  registration: Record<string, string>;
+  reached: string[];
+  fellBackTo: string[];
+  /** What a schema-registered `tasks/update` handler was actually given. */
+  updateSaw?: { paramsKeys: string[]; ctxInputResponses: unknown };
 }
 
-const handler = createMcpHandler(factory, { legacy: "reject" });
-const http = createServer(toNodeHandler(handler));
-await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
-const address = http.address();
-if (address === null || typeof address === "string") throw new Error("no port");
-const base = `http://127.0.0.1:${address.port}/`;
+/** One server per registration mode, so no mode can mask another. */
+function factoryFor(mode: Mode, probe: Probe): () => McpServer {
+  return () => {
+    const mcp = new McpServer({ name: `a6-${mode}`, version: "0.0.0" });
+    mcp.registerTool(
+      "noop",
+      { description: "keeps the server non-empty", inputSchema: {} },
+      async () => ({ content: [] }),
+    );
+
+    for (const method of TASK_METHODS) {
+      // The handler returns no `resultType`, so the wire shows what the SDK
+      // stamps on its own.
+      const answer = async (
+        params?: Record<string, unknown>,
+        ctx?: { mcpReq: { inputResponses?: Record<string, unknown> } },
+      ) => {
+        probe.reached.push(method);
+        if (method === "tasks/update" && params !== undefined) {
+          probe.updateSaw = {
+            paramsKeys: Object.keys(params).sort(),
+            ctxInputResponses: ctx?.mcpReq.inputResponses,
+          };
+        }
+        return method === "tasks/get"
+          ? {
+              taskId: TASK_ID,
+              status: "working",
+              createdAt: "2026-10-12T00:00:00.000Z",
+              lastUpdatedAt: "2026-10-12T00:00:00.000Z",
+              ttlMs: null,
+            }
+          : {};
+      };
+      try {
+        if (mode === "schema") {
+          mcp.server.setRequestHandler(method, ANY_PARAMS, answer as never);
+        } else if (mode === "typed") {
+          // The typed overload excludes the task names at the type level, so
+          // reaching the runtime path needs the cast.
+          (
+            mcp.server.setRequestHandler as unknown as (
+              method: string,
+              handler: () => Promise<unknown>,
+            ) => void
+          )(method, answer);
+        } else {
+          continue;
+        }
+        probe.registration[method] = "accepted";
+      } catch (error) {
+        probe.registration[method] =
+          `threw ${(error as Error).name}: ${(error as Error).message}`;
+      }
+    }
+
+    if (mode === "fallback") {
+      mcp.server.fallbackRequestHandler = async (request: {
+        method: string;
+      }) => {
+        probe.fellBackTo.push(request.method);
+        return {};
+      };
+    }
+
+    return mcp;
+  };
+}
+
+async function listen(mode: Mode, probe: Probe): Promise<string> {
+  const handler = createMcpHandler(factoryFor(mode, probe), {
+    legacy: "reject",
+  });
+  const http = createServer(toNodeHandler(handler));
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address();
+  if (address === null || typeof address === "string")
+    throw new Error("no port");
+  servers.push(http);
+  return `http://127.0.0.1:${address.port}/`;
+}
+
+const servers: ReturnType<typeof createServer>[] = [];
+
+interface Outcome {
+  status: number;
+  error?: { code: number; message: string };
+  result?: Record<string, unknown>;
+}
 
 async function call(
+  base: string,
   method: string,
-): Promise<{ status: number; body: Record<string, unknown> }> {
+  { nameHeader = true } = {},
+): Promise<Outcome> {
   const response = await fetch(base, {
     method: "POST",
     headers: {
@@ -89,84 +161,131 @@ async function call(
       accept: "application/json, text/event-stream",
       "MCP-Protocol-Version": REVISION,
       "Mcp-Method": method,
+      ...(nameHeader ? { "Mcp-Name": TASK_ID } : {}),
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method,
       params: {
-        taskId: "t1",
+        taskId: TASK_ID,
+        ...(method === "tasks/update"
+          ? { inputResponses: INPUT_RESPONSES }
+          : {}),
         _meta: {
           "io.modelcontextprotocol/protocolVersion": REVISION,
           "io.modelcontextprotocol/clientInfo": { name: "probe", version: "0" },
-          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientCapabilities": {
+            extensions: { "io.modelcontextprotocol/tasks": {} },
+          },
         },
       },
     }),
   });
   const text = await response.text();
   const frame = text.match(/^data: (.*)$/m);
-  return {
-    status: response.status,
-    body: JSON.parse(frame ? frame[1]! : text) as Record<string, unknown>,
+  const body = JSON.parse(frame ? frame[1]! : text) as {
+    error?: { code: number; message: string };
+    result?: Record<string, unknown>;
   };
+  return body.error
+    ? { status: response.status, error: body.error }
+    : { status: response.status, result: body.result };
 }
 
-const observed: Record<
-  string,
-  { status: number; error?: unknown; ok?: boolean }
-> = {};
+const observed: Record<string, unknown> = {};
+const outcomes: Record<Mode, Record<string, Outcome>> = {
+  schema: {},
+  typed: {},
+  fallback: {},
+};
+const probes: Record<Mode, Probe> = {
+  schema: { registration: {}, reached: [], fellBackTo: [] },
+  typed: { registration: {}, reached: [], fellBackTo: [] },
+  fallback: { registration: {}, reached: [], fellBackTo: [] },
+};
 
-for (const method of [...METHODS, "totally/unknown"]) {
-  const { status, body } = await call(method);
-  const error = (body as { error?: { code: number; message: string } }).error;
-  observed[method] = error ? { status, error } : { status, ok: true };
+for (const mode of ["schema", "typed", "fallback"] as const) {
+  const base = await listen(mode, probes[mode]);
+  for (const method of TASK_METHODS) {
+    outcomes[mode][method] = await call(base, method);
+  }
+  observed[mode] = { ...probes[mode], responses: outcomes[mode] };
 }
 
-console.log(
-  JSON.stringify(
-    { revision: REVISION, observed, reached, fellBackTo },
-    null,
-    2,
-  ),
-);
+// The control: the same schema-registered server, without `Mcp-Name`.
+const controlBase = await listen("schema", {
+  registration: {},
+  reached: [],
+  fellBackTo: [],
+});
+const withoutName = await call(controlBase, "tasks/get", { nameHeader: false });
+observed.controlWithoutMcpName = withoutName;
 
-/* -- The finding ---------------------------------------------------------- */
+console.log(JSON.stringify({ revision: REVISION, observed }, null, 2));
 
-for (const blocked of BLOCKED) {
+/* -- The findings, asserted so this file fails if upstream changes -------- */
+
+const code = (outcome: Outcome | undefined) => outcome?.error?.code;
+
+// (a) explicit schema: all three methods reach their handlers.
+for (const method of TASK_METHODS) {
   assert.equal(
-    (observed[blocked]?.error as { code?: number } | undefined)?.code,
+    outcomes.schema[method]?.status,
+    200,
+    `schema-registered ${method} is served`,
+  );
+  assert.ok(outcomes.schema[method]?.result, `${method} returns a result`);
+}
+assert.deepEqual(probes.schema.reached, [...TASK_METHODS]);
+
+// The SDK stamps the discriminator the handler left out.
+for (const method of TASK_METHODS) {
+  assert.equal(
+    outcomes.schema[method]?.result?.resultType,
+    "complete",
+    `the SDK stamps resultType "complete" on ${method}`,
+  );
+}
+
+// The SDK lifts `params.inputResponses` (2026-07-28 multi-round-trip material)
+// out of params before the handler runs and surfaces it on the context
+// instead, so a `tasks/update` handler must read it from there.
+assert.deepEqual(probes.schema.updateSaw, {
+  paramsKeys: ["taskId"],
+  ctxInputResponses: INPUT_RESPONSES,
+});
+
+// (b) typed registration: get and cancel register but stay era-gated; update
+// is not a spec method, so the typed overload refuses it outright.
+assert.equal(probes.typed.registration["tasks/get"], "accepted");
+assert.equal(probes.typed.registration["tasks/cancel"], "accepted");
+assert.match(
+  probes.typed.registration["tasks/update"] ?? "",
+  /^threw TypeError: 'tasks\/update' is not a spec request method/,
+);
+for (const method of ["tasks/get", "tasks/cancel", "tasks/update"]) {
+  assert.equal(
+    code(outcomes.typed[method]),
     -32601,
-    `EXPECTED (as of the report): ${blocked} is rejected before its handler runs`,
-  );
-  assert.ok(
-    !reached.includes(blocked),
-    `${blocked}'s registered handler must never have been invoked`,
+    `typed ${method} answers -32601`,
   );
 }
+assert.deepEqual(probes.typed.reached, []);
 
-assert.ok(observed["tasks/update"]?.ok, "tasks/update dispatches normally");
-assert.ok(reached.includes("tasks/update"), "its handler runs");
-assert.ok(
-  reached.includes("x-durable-tasks/get"),
-  "a vendor-named control also runs",
-);
+// (c) fallbackRequestHandler: still gated for get and cancel; update, which no
+// era claims, falls through to it.
+assert.equal(code(outcomes.fallback["tasks/get"]), -32601);
+assert.equal(code(outcomes.fallback["tasks/cancel"]), -32601);
+assert.equal(outcomes.fallback["tasks/update"]?.status, 200);
+assert.deepEqual(probes.fallback.fellBackTo, ["tasks/update"]);
 
-// The gate sits above the fallback too: an unrelated unknown method reaches it,
-// and the blocked task methods do not.
-assert.ok(
-  fellBackTo.includes("totally/unknown"),
-  "an unknown method does reach fallbackRequestHandler",
-);
-for (const blocked of BLOCKED) {
-  assert.ok(
-    !fellBackTo.includes(blocked),
-    `EXPECTED (as of the report): ${blocked} never reaches the fallback either`,
-  );
-}
+// Control: without `Mcp-Name` the request never reaches dispatch.
+assert.equal(withoutName.status, 400);
+assert.equal(code(withoutName), -32020);
 
 console.log(
-  "\nreproduced: the era gate rejects tasks/get and tasks/cancel ahead of both the handler map and the fallback.",
+  "\nmeasured: explicit-schema handlers serve all three task methods; typed registration and the fallback stay gated for get and cancel.",
 );
 
-http.close();
+for (const http of servers) http.close();

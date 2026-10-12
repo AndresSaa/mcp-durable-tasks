@@ -3,12 +3,24 @@
  * with the required discriminator accidentally omitted is accepted as an empty
  * success.
  *
- * Reported as conformance question A10 in `docs/contract.md`.
+ * Reported as conformance question A10 in `docs/contract.md`. First measured
+ * on `@modelcontextprotocol/*` 2.0.0 (that version of this file is kept at the
+ * `v0.2.1` tag); re-measured unchanged on server/client 2.3.1.
  *
- * **This is frozen evidence, not a usage example.** The dependency versions are
- * pinned exactly and stay pinned after upstream changes anything, because an
- * issue links to this file at a commit as the measurement it was reviewed
- * against.
+ * The behaviour has two halves, and 2.3.1 changed only one of them:
+ *
+ * - **Server.** The encode step stamps `resultType: "complete"` on any result
+ *   whose handler left it out, `tools/call` included. A task handle that
+ *   forgot its discriminator therefore leaves the server as a final result.
+ * - **Client.** It no longer bridges an absent discriminator to `"complete"`
+ *   on a 2026-07-28 connection: a result without `resultType` is rejected as
+ *   invalid. That is only reachable when something other than the SDK server
+ *   produced the response, so this script strips the field in front of the
+ *   handler to show it.
+ *
+ * **Evidence, not a usage example.** The dependency versions are pinned
+ * exactly, because an issue links to this file at a commit as the measurement
+ * it was reviewed against.
  *
  * Run: `node --experimental-strip-types result-type.mts`
  */
@@ -30,6 +42,12 @@ const STAMP = "2026-08-10T00:00:00.000Z";
 const TASKS_CAPABILITIES = {
   extensions: { "io.modelcontextprotocol/tasks": {} },
 };
+
+/**
+ * The tool whose response has `resultType` removed in front of the SDK handler,
+ * standing in for a server that omits it. The SDK server itself never does.
+ */
+const STRIP = "wire-without-discriminator";
 
 /** The base task handle the extension says `tools/call` may return instead. */
 const taskShape = {
@@ -53,6 +71,8 @@ const CASES: Record<string, CallToolResult> = {
   } as unknown as CallToolResult,
   "task-missing-discriminator": { ...taskShape } as unknown as CallToolResult,
   "plain-empty-result": { content: [] },
+  // Stripped of its stamped discriminator on the way out; see `STRIP`.
+  [STRIP]: { content: [{ type: "text", text: "final" }] },
 };
 
 function factory(): McpServer {
@@ -71,7 +91,22 @@ function factory(): McpServer {
 }
 
 const handler = createMcpHandler(factory, { legacy: "reject" });
-const http = createServer(toNodeHandler(handler));
+
+/** Removes `resultType` from the `STRIP` tool's response, and nothing else. */
+const stripping: typeof handler = {
+  ...handler,
+  fetch: async (request, options) => {
+    const response = await handler.fetch(request, options);
+    if (request.headers.get("mcp-name") !== STRIP) return response;
+    const text = await response.text();
+    const rewritten = text.replace(/"resultType":"complete",?/, "");
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    return new Response(rewritten, { status: response.status, headers });
+  },
+};
+
+const http = createServer(toNodeHandler(stripping));
 await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
 const address = http.address();
 if (address === null || typeof address === "string") throw new Error("no port");
@@ -166,6 +201,11 @@ assert.equal(
   "EXPECTED (as of the report): a conforming task result is rejected by the SDK client",
 );
 assert.equal(conforming.clientCode, "UNSUPPORTED_RESULT_TYPE");
+assert.deepEqual(
+  conforming.wireContent,
+  [],
+  "observed on 2.3.1: the server also adds an empty `content` to the task handle",
+);
 
 assert.equal(
   omitted.wireResultType,
@@ -191,8 +231,18 @@ assert.deepEqual(
   "the task fields survive on the client as unknown extra keys",
 );
 
+// The client half: an absent discriminator is no longer bridged to "complete".
+const stripped = observed[STRIP] as Record<string, unknown>;
+assert.equal(stripped.wireResultType, undefined, "the field really was absent");
+assert.equal(
+  stripped.client,
+  "rejected",
+  "the 2.3.1 client rejects a 2026-07-28 result without resultType",
+);
+assert.equal(stripped.clientCode, "INVALID_RESULT");
+
 console.log(
-  "\nreproduced: the conforming result is rejected; the non-conforming one is accepted as an empty success.",
+  "\nreproduced: the conforming result is rejected; the non-conforming one is stamped by the server and accepted as an empty success. The client alone no longer bridges an absent discriminator.",
 );
 
 await client.close();

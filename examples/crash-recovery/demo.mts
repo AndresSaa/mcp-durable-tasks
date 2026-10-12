@@ -46,7 +46,11 @@ function start(port = 0): Promise<number> {
   });
 }
 
-/** One JSON-RPC call over the modern wire, headers and envelope included. */
+/**
+ * One JSON-RPC call over the modern wire, headers and envelope included.
+ * `name` becomes the `Mcp-Name` routing header: the tool name for `tools/call`,
+ * the task ID for `tasks/*`. The server rejects a task request without it.
+ */
 async function rpc(
   port: number,
   method: string,
@@ -74,7 +78,9 @@ async function rpc(
             name: "demo",
             version: "0.1.0",
           },
-          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientCapabilities": {
+            extensions: { "io.modelcontextprotocol/tasks": {} },
+          },
         },
       },
     }),
@@ -90,7 +96,7 @@ async function rpc(
 }
 
 const getTask = (port: number, taskId: string) =>
-  rpc(port, "tasks/get", { taskId });
+  rpc(port, "tasks/get", { taskId }, taskId);
 
 try {
   step("1. Start the server and defer some work");

@@ -17,9 +17,10 @@ representing the recommended way to use the package, that is a bug.
 
 `demo.mts` drives the whole thing in one command and asserts the outcome, so
 it is safe to record and it fails loudly rather than printing a happy story.
-`server.mts` is the part worth reading: it also shows the simplest verified
-host workaround, because `tasks/get` and `tasks/cancel` cannot be served through
-the SDK's handler registration on a 2026-07-28 connection.
+`server.mts` is the part worth reading: it serves `tasks/get`, `tasks/update`
+and `tasks/cancel` through handlers registered with an explicit schema, the
+form `@modelcontextprotocol/server` 2.3.0 and later serve on a 2026-07-28
+connection, and it needs no middleware or transport rewrite.
 
 ## `conformance-reproductions/` — frozen evidence
 
@@ -27,11 +28,13 @@ Minimal scripts that reproduce the upstream behaviour recorded in
 [`docs/contract.md`](../docs/contract.md#extension-conformance-questions) and
 reported to the relevant maintainers.
 
-**These pin exact dependency versions on purpose, and they stay pinned even
-after upstream fixes the behaviour.** An issue links to a script at a specific
-commit as its evidence; that link has to keep meaning what it meant when it was
-reviewed. Upgrading these to make them "current" would quietly destroy the
-record of what was measured.
+**These pin exact dependency versions on purpose.** An issue links to a script
+at a specific commit as its evidence, and that link has to keep meaning what it
+meant when it was reviewed. A bump is therefore a deliberate re-measurement,
+never routine maintenance: it lands together with the result it produced in
+`docs/contract.md`, and the earlier measurement stays reachable at the commit
+and tag it was published with. The `2.0.0` reproductions are at `v0.2.1`; the
+current ones pin server and client `2.3.1`.
 
 They are not patterns to follow. Where a reproduction shows a workaround, the
 workaround is described in the compatibility profile, not recommended here.
@@ -50,5 +53,4 @@ pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
 
 CI runs both on every pull request, pinned, and a failure blocks the merge:
 with versions and a lockfile fixed, a break means this repository changed
-something, not that upstream moved. A separate non-blocking job tracks a newer
-SDK so drift is visible without holding up unrelated work.
+something, not that upstream moved.
