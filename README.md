@@ -10,40 +10,38 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/AndresSaa/mcp-durable-tasks/badge)](https://scorecard.dev/viewer/?uri=github.com/AndresSaa/mcp-durable-tasks)
 
-**A durable task state machine for the MCP Tasks extension
-(`io.modelcontextprotocol/tasks`, SEP-2663).** Pure TypeScript, with zero
-runtime dependencies on its main entry point. Its one job is to hold a
-long-running operation's state; with `WalTaskStore`, state already confirmed by
-the application remains available to `tasks/get` after the connection or the
-whole process has gone.
+**A library you import into an MCP server to keep durable task state for the
+MCP Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663).** It is a task
+state machine written in TypeScript, with no runtime dependencies on its main
+entry point. With `WalTaskStore`, any state your application has already
+confirmed is still available to `tasks/get` after the connection, or the whole
+process, is gone.
 
-This is **a library you import into an MCP server** — not a server you add to
-`mcp.json`, and not a to-do manager. "Tasks" here means the extension's durable
-task handles: the thing a server returns instead of blocking on work that takes
-minutes.
+It is not a server you add to `mcp.json`, and it is not a to-do manager. In this
+project, a "task" is the extension's durable task handle: what a server returns
+when the work takes minutes and it should not block.
 
 It is the server-side counterpart of the official
 [`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks)
-package. Its `/client` entry point is how a requester calls a tool, polls the
-task and answers its input requests; this package is what the server behind it
-uses to create that task, keep its state and serve `tasks/get`, `tasks/update`
-and `tasks/cancel`. It targets the stable `2026-07-28` revision of the
-extension.
+package. The client calls a tool, polls the task and answers its input requests
+through that package's `/client` entry point. The server uses this library to
+create the task, store its state and answer `tasks/get`, `tasks/update` and
+`tasks/cancel`. It targets the stable `2026-07-28` revision of the extension.
 
 ```ts
 import { TaskLifecycle, MemoryTaskStore } from "mcp-durable-tasks";
 
 const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 
-// tools/call decides to defer: hand back a task instead of a result.
+// In tools/call: return a task instead of a result.
 const created = await tasks.createTask({ ttlMs: 3_600_000 });
 runTheWork(tasks.handle(created.taskId)); // not awaited
 
-// tasks/get, later, possibly from another connection.
+// Later, in tasks/get (possibly from another connection).
 const view = await tasks.getTask(created.taskId);
 ```
 
-The worker writes through the handle:
+The worker writes its progress through the handle:
 
 ```ts
 async function runTheWork(task) {
@@ -55,25 +53,27 @@ async function runTheWork(task) {
 
 ## Before you adopt it
 
-**`WalTaskStore` is for one process and one disk.** It inherits
-[`process-wal`](https://github.com/AndresSaa/process-wal)'s single-writer
-contract: two processes on the same directory corrupt the log. That fits stdio
-MCP servers — Claude Code, Cursor, VS Code, a local Codex — which is where the
-genuinely long tasks live: builds, test suites, migrations, indexing. For a
-stateless HTTP server behind a load balancer, implement `TaskStore` over your
-shared database; it is five methods, and `mcp-durable-tasks/testing` gives you
-the test suite before you write the first one.
+**`WalTaskStore` works for one process and one disk.** It uses
+[`process-wal`](https://github.com/AndresSaa/process-wal), which allows a single
+writer. If two processes open the same directory, the log gets corrupted. This
+fits MCP servers that run over stdio, such as those started by Claude Code,
+Cursor or VS Code. That is also where long tasks are common: builds, test
+suites, migrations and indexing. If your server is stateless and sits behind a
+load balancer, implement `TaskStore` on top of your shared database. It has
+five methods, and `mcp-durable-tasks/testing` gives you a test suite to run
+before you write the first one.
 
-**Worker coordination has process affinity.** `TaskStore` compare-and-swap
-protects the durable record when several instances can write it, but the
-promise `requestInput()` returns and the cancellation signal belong to the
-process running that worker. While a worker is live, `tasks/update` and
-`tasks/cancel` have to reach that instance. That is the model the extension
-itself specifies: over Streamable HTTP, clients send every `tasks/get`,
-`tasks/update` and `tasks/cancel` with an `Mcp-Name` header set to the task ID,
-precisely so that a load balancer can route each request for a task to the
-instance holding its state. Configure that routing in your HTTP layer; this
-library deliberately does not read headers or embed a broker or a queue. See
+**A running worker belongs to one process.** Compare-and-swap on the store
+protects the saved record when several instances can write it. But the promise
+that `requestInput()` returns, and the cancellation signal, live in the process
+that runs the worker. While that worker is running, `tasks/update` and
+`tasks/cancel` must reach the same instance.
+
+The extension expects this setup. Over Streamable HTTP, the client sends the
+task ID in an `Mcp-Name` header on every `tasks/get`, `tasks/update` and
+`tasks/cancel`, so a load balancer can send each request to the instance that
+holds the task. You configure that routing in your HTTP layer. This library does
+not read headers, and it does not include a broker or a queue. See
 [the process-boundary contract](docs/contract.md#process-boundaries).
 
 ## Contents
@@ -92,42 +92,43 @@ library deliberately does not read headers or embed a broker or a queue. See
 
 ## Status
 
-The current release is `v0.3.0`. It includes the engine, both stores, the public
-conformance kit, property-based state-machine tests, real crash tests and the
-runnable crash-recovery example. It is published from GitHub Actions through
-npm trusted publishing, with provenance tied to the release tag and commit.
+The current release is `v0.3.0`. It includes the engine, both stores, the
+public conformance kit, property-based state-machine tests, real crash tests and
+a runnable crash-recovery example. Since `v0.2.0`, releases are published from
+GitHub Actions with npm trusted publishing, and each one has a provenance
+attestation tied to its tag and commit.
 
-`v0.3.0` hardens the engine after an independent audit and aligns its
-validation with the stable `2026-07-28` schema. It contains breaking changes,
-which pre-1.0 semver ships as a minor release; the
-[changelog](CHANGELOG.md) lists each one and the known issues
-that remain open.
+`v0.3.0` hardens the engine after an independent audit and aligns its input
+validation with the stable `2026-07-28` schema. It contains breaking changes.
+Before `1.0.0`, semver treats those as a minor release. The
+[changelog](CHANGELOG.md) lists each change and the known issues that are still
+open.
 
-`v0.1.0` was the one-time manual registry bootstrap. No later release uses a
-long-lived npm token.
+`v0.1.0` was published to npm by hand, once, to create the package on the
+registry. No later release uses a long-lived npm token.
 
-The public API remains provisional until `1.0.0`; the version roadmap and open
-extension questions live in
+The public API may still change before `1.0.0`. The version roadmap and the open
+questions about the extension are in
 [the contract and conformance profile](docs/contract.md). The next planned
-feature, not built yet, is a change emitter for the optional
-`notifications/tasks`: the engine emits each committed task change, and the
-host delivers it. There is no client entry point and none is planned; use
-`@modelcontextprotocol/ext-tasks/client` for the requester side.
+feature is not built yet: a change emitter for the optional `notifications/tasks`
+message. The engine emits each committed change, and the host delivers it. This
+package has no client entry point and none is planned. For the client side, use
+`@modelcontextprotocol/ext-tasks/client`.
 
 ## Install
 
 Requires Node.js 22 or newer.
 
-The library supports Node.js 22 from its first release; working from source
-uses the pinned pnpm 11 toolchain and therefore needs Node.js 22.13 or newer.
+To work from source, you need Node.js 22.13 or newer, because the repository
+pins pnpm 11.
 
-To install the current registry release:
+Install the latest release from the registry:
 
 ```sh
 pnpm add mcp-durable-tasks
 ```
 
-To validate the exact tag from source instead:
+To check out an exact release and run its tests instead:
 
 ```sh
 git clone https://github.com/AndresSaa/mcp-durable-tasks.git
@@ -137,30 +138,30 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm test
 ```
 
-`process-wal` is an **optional peer dependency**, needed only by the `/wal`
-entry point. Nothing else in the package requires it:
+`process-wal` is an **optional peer dependency**. Only the `/wal` entry point
+needs it:
 
 ```sh
 pnpm add mcp-durable-tasks process-wal
 ```
 
-| Entry point                 | What it holds                        | Needs         |
+| Entry point                 | What it contains                     | Needs         |
 | --------------------------- | ------------------------------------ | ------------- |
 | `mcp-durable-tasks`         | the engine, `MemoryTaskStore`, types | nothing       |
 | `mcp-durable-tasks/wal`     | `WalTaskStore`                       | `process-wal` |
 | `mcp-durable-tasks/testing` | the store conformance kit            | nothing       |
 
-The main entry point uses no Node built-ins, so the engine and
-`MemoryTaskStore` run in web-standard runtimes too.
+The main entry point uses no Node built-ins. The engine and `MemoryTaskStore`
+can therefore also run in web-standard runtimes.
 
 ## Documentation
 
-- [**API**](docs/api.md) — every option, method and error
-- [Durability](docs/durability.md) — what survives what, and the two
+- [**API**](docs/api.md): every option, method and error
+- [Durability](docs/durability.md): what survives what, and the two
   unsupported configurations
-- [Internals](docs/internals.md) — design decisions and source layout
-- [Contract and conformance](docs/contract.md) — scope, invariants, SDK
-  compatibility findings and open extension questions
+- [Internals](docs/internals.md): design decisions and source layout
+- [Contract and conformance](docs/contract.md): scope, invariants, SDK
+  compatibility findings and open questions about the extension
 
 ## Official references
 
@@ -174,28 +175,28 @@ The main entry point uses no Node built-ins, so the engine and
 
 ## What survives what
 
-`WalTaskStore` writes every mutation to a write-ahead log before returning, and
-replays it on open. A returned `createTask()` means the task is already durable
-— the extension states that normatively, and it is the invariant this package
-exists for.
+`WalTaskStore` writes every change to a write-ahead log before it returns, and
+replays the log when it opens. When `createTask()` returns, the task is already
+on disk. The extension requires this, and it is the main guarantee of this
+package.
 
-Automatic compaction happens only after the triggering mutation is durable. A
-compaction failure therefore does not turn that committed mutation into a
-rejection. Pass `onCompactionError` to observe it. The event says whether the
-underlying WAL became unusable; in that case the committed call still returns,
-and the next store operation fails with `ERR_WAL_UNUSABLE` so the host can close
-and reopen the store for recovery.
+Compaction runs automatically, and only after the change that triggered it is
+saved. If compaction fails, the change that triggered it is still committed and
+does not turn into an error. Pass `onCompactionError` to be notified. The event
+tells you whether the underlying log can still be used. If it cannot, the call
+that triggered it still returns, and the next store operation fails with
+`ERR_WAL_UNUSABLE`. At that point, close and reopen the store to recover.
 
-WAL entries are bounded, not unbounded. `WalTaskStore` defaults
-`maxEntryBytes` to **8 MiB per encoded task record** (including its envelope
-and metadata): enough for roughly 100,000 ordinary 80-byte build-log lines,
-while keeping synchronous JSON encoding and snapshot compaction under a hard
-per-task ceiling. Set a different limit when your workload warrants it.
+Each log entry has a size limit. `WalTaskStore` sets `maxEntryBytes` to **8 MiB
+per encoded task record** by default, including its envelope and metadata. That
+is enough for about 100,000 build-log lines of 80 bytes each. The limit also
+keeps JSON encoding and compaction bounded for each task. You can set a
+different limit if your workload needs it.
 
-An oversized mutation does not commit and throws `TaskEntryTooLargeError`,
-whose stable `code` is `ERR_ENTRY_TOO_LARGE`. A worker can therefore preserve
-its completed work by retrying the terminal transition with a summary or
-truncated result:
+A change that is too large is not committed, and it throws
+`TaskEntryTooLargeError`. Its `code` is `ERR_ENTRY_TOO_LARGE`. A worker can keep
+its finished work by retrying the final step with a summary or a truncated
+result:
 
 ```ts
 import { isTaskEntryTooLargeError } from "mcp-durable-tasks";
@@ -208,65 +209,75 @@ try {
 }
 ```
 
-Raising the limit only moves this failure boundary; it never removes it.
-Use the predicate rather than `instanceof`: duplicated npm packages and the
-separate CJS entry bundles do not guarantee shared class identity.
+A higher limit only moves the point where this error happens. Use the predicate
+instead of `instanceof`. If npm installs the package twice, or you load both the
+CJS and ESM builds, the two copies do not share the same error class.
 
-Task results, errors, and input payloads are recursively validated as plain JSON
-before state changes. Values such as `Map`, `Date`, `bigint`, functions, cycles,
-array holes, and non-finite numbers are rejected consistently by both stores;
-the in-memory view can therefore never differ from the value replayed from WAL.
-JavaScript's `-0` is valid JSON, so it is accepted and canonicalised to `0`
-before mutation; it is the only accepted finite number whose identity changes
-through `JSON.stringify`/`JSON.parse`.
-The input round-trip additionally validates the full MCP shape before a write:
-sampling content must be one of its discriminated text, image, audio, tool-use
-or tool-result blocks; elicitation schemas stay within MCP's primitive subset;
-URL elicitation requires a valid URL; roots use `file://`; binary blocks are
-Base64; and accepted elicitation values are primitives or string arrays. These
-rules were written from the
+Results, errors and input payloads must be plain JSON, and both stores check
+this before they change any state. They reject `Map`, `Date`, `bigint`,
+functions, cycles, array holes and non-finite numbers. So the value in memory
+always matches the value replayed from the log. JavaScript's `-0` is valid JSON,
+so it is accepted and stored as `0`. It is the only finite number that changes
+identity in a `JSON.stringify` and `JSON.parse` round trip.
+
+The input round also checks the full MCP shape of each request and response
+before it writes anything:
+
+- Sampling content must be a text, image, audio, tool-use or tool-result block.
+- Elicitation schemas must stay within MCP's primitive types.
+- URL elicitation needs a valid URL, roots use `file://`, and binary content is
+  Base64.
+- Accepted elicitation values are primitives or arrays of strings.
+
+These rules were first written from the
 [`@modelcontextprotocol/sdk@1.30.0` source](https://github.com/modelcontextprotocol/typescript-sdk/blob/1.30.0/src/types.ts)
-and are checked against the stable `2026-07-28` schema. Three SDK rules that
-refused shapes `2026-07-28` defines (URL elicitation without `elicitationId`,
-a tool `outputSchema` not rooted at `object`, non-object `structuredContent`)
-now follow that revision; the remaining differences are listed in the
-[contract](docs/contract.md#input-rounds). A JSON object is not accepted
-merely because it is serialisable. The engine does not yet enforce a JSON-RPC
-error shape for `fail()`. That is a known defect
-([contract](docs/contract.md#wire-contract)), not fixed yet.
+and are tested against the stable `2026-07-28` schema. Three of those SDK rules
+refused shapes that `2026-07-28` allows: URL elicitation without
+`elicitationId`, a tool `outputSchema` that is not an object at its root, and
+`structuredContent` that is not an object. They now follow `2026-07-28`. The
+[contract](docs/contract.md#input-rounds) lists the remaining differences.
+
+One known defect remains in this area. The engine does not yet check that
+`fail()` receives a JSON-RPC error object
+([contract](docs/contract.md#wire-contract)).
 
 | Mode                     | Process crash, `SIGKILL`, restart | Host or power loss             |
 | ------------------------ | --------------------------------- | ------------------------------ |
 | `fsync: false` (default) | Recoverable                       | Not guaranteed                 |
 | `fsync: true`            | Recoverable                       | Requests a storage flush first |
 
-The left column is tested, not asserted: `test/crash.test.ts` runs real child
-processes, kills them with `SIGKILL` at a known state, and reopens the
-directory. A task created and never touched again comes back as `working`; one
-parked on input comes back with its requests and its used-key ledger intact, so
-the restarted process still refuses to reuse a key the dead one issued; a task
-completed the instant before the signal keeps its result; an acknowledged
-progress version is a hard lower bound after a kill in later appends; and a
-confirmed multi-task snapshot survives a kill in a compaction loop. Those tests
-load `dist/`, so what is proven to recover is the package you install.
+The left column is tested. `test/crash.test.ts` starts real child processes,
+kills them with `SIGKILL` at a known state and reopens the directory:
 
-What does not survive is the input round itself. A restarted worker has to ask
-again with new keys, and a client reply that completes the old round before it
-does is acknowledged but not stored, so it reaches no worker
+- A task that was created and never touched again comes back as `working`.
+- A task that was waiting for input comes back with its requests and its list of
+  used keys. The restarted process still cannot reuse a key that the dead
+  process issued.
+- A task completed just before the kill keeps its result.
+- A progress version that was acknowledged is never lost, even if the process is
+  killed during later writes.
+- A confirmed snapshot of several tasks survives a kill during compaction.
+
+These tests load `dist/`, so they check the package that you install.
+
+The input round itself does not survive a restart. The restarted worker has to
+ask again with new keys. If a client reply completes the old round before the
+worker does that, the reply is acknowledged but not stored, so no worker ever
+receives it
 ([durability](docs/durability.md#what-durability-does-not-cover)).
 
-The deterministic examples are backed by a fast-check state-machine model:
-random schedules combine progress, TTL changes and clock rollback, partial and
-duplicate input responses, cancellation, terminal races and injected CAS
-conflicts. Every step compares the full record, closed wire projection and
-single-settlement worker effects against an independent reference state.
+A state-machine model built with fast-check backs these examples. Random
+schedules combine progress updates, TTL changes, clock rollbacks, partial and
+duplicate input responses, cancellation, races at the terminal state and
+injected CAS conflicts. After every step, the test compares the full record, the
+closed wire projection and the worker effects against an independent reference.
 
 ## See it survive a crash
 
-`examples/crash-recovery/` is a real MCP server whose task outlives the
-process. One command starts it, defers work through `tools/call`, kills the
-server with `SIGKILL`, starts it again, and reads the finished result back
-from the new process:
+`examples/crash-recovery/` is a real MCP server whose task outlives its process.
+One command starts the server and defers work through `tools/call`. It then kills
+the server with `SIGKILL`, starts it again and reads the finished result from the
+new process:
 
 ```sh
 pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
@@ -274,8 +285,8 @@ pnpm --filter mcp-durable-tasks-example-crash-recovery run demo
 
 [![Watch the crash-recovery demo](https://asciinema.org/a/U0DD3KWEttwhv5g5.svg)](https://asciinema.org/a/U0DD3KWEttwhv5g5)
 
-The recording above runs the example from a clean checkout. Its essential
-output is also included below for text-only readers:
+The recording runs the example from a clean checkout. The key output is also
+here as text:
 
 ```
 3. Kill the server outright — SIGKILL, no shutdown hook, no flush
@@ -286,46 +297,45 @@ output is also included below for text-only readers:
    result   → {"content":[{"type":"text","text":"indexed 5 files, 0 errors"}], ...}
 ```
 
-It runs on every pull request, so it cannot quietly stop being true. The
-server also shows how to serve `tasks/*` through the official SDK — see the
-next section.
+The demo runs on every pull request, so it stays accurate. It also shows how to
+serve `tasks/*` through the official SDK, which the next section explains.
 
 ## The official SDK's era gate
 
 Before `@modelcontextprotocol/server` 2.3.0, a `2026-07-28` server **could not
 serve two of the extension's three methods through the SDK's registered
-handlers.** `tasks/get` and `tasks/cancel` answered `-32601` before any handler
-ran — including `fallbackRequestHandler` — because both names belong to the
-retired `2025-11-25` method registry and the protocol-era gate fired on the way
-in. `tasks/update` worked, because SEP-2663 introduced it and no era claims the
-name. That was measured with 2.0.0, not inferred; the environment and findings
-are in the
+handlers.** `tasks/get` and `tasks/cancel` returned `-32601` before any handler
+ran, including `fallbackRequestHandler`. Both names belong to the retired
+`2025-11-25` method registry, and the SDK's protocol-era gate rejected them on
+the way in. `tasks/update` worked, because SEP-2663 introduced that name and no
+earlier era claims it. This was measured with 2.0.0. The environment and the
+results are in the
 [compatibility profile](docs/contract.md#typescript-sdk-v2-compatibility).
 
 The gate is fixed upstream
 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599),
-closing [#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598)).
-Measured here with `@modelcontextprotocol/server` 2.3.1: handlers registered
-with an explicit schema, `setRequestHandler(method, schemas, handler)`, serve
-all three methods. Typed registration and `fallbackRequestHandler` still answer
-`-32601` for `tasks/get` and `tasks/cancel`.
+which closes [#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598)).
+We measured it with `@modelcontextprotocol/server` 2.3.1. Handlers registered
+with an explicit schema, using `setRequestHandler(method, schemas, handler)`,
+serve all three methods. Typed registration and `fallbackRequestHandler` still
+return `-32601` for `tasks/get` and `tasks/cancel`.
 
 The crash-recovery example requires `server` `^2.3.0` and registers the three
-methods that way, with no middleware and no transport rewrite. Two details it
-shows are easy to miss:
+methods in that way, with no middleware and no transport rewrite. It also shows
+two details that are easy to miss:
 
-- the SDK rejects a task request whose `Mcp-Name` header does not carry
-  `params.taskId` (`-32020`), before any handler runs; and
-- on a `2026-07-28` request the SDK moves `params.inputResponses` to
-  `ctx.mcpReq.inputResponses`, so a `tasks/update` handler reads it from there.
+- The SDK rejects a task request when the `Mcp-Name` header does not match
+  `params.taskId`. It returns `-32020`, before any handler runs.
+- On a `2026-07-28` request, the SDK moves `params.inputResponses` to
+  `ctx.mcpReq.inputResponses`. A `tasks/update` handler must read it from there.
 
-A host on a server version before 2.3.0 still needs its own narrow workaround;
-the profile lists the two that were verified on 2.0.0.
+If your server uses a version before 2.3.0, you still need a narrow workaround.
+The profile lists the two that we verified on 2.0.0.
 
 ## Writing your own store
 
-`TaskStore` is five methods, and you do not have to guess whether yours is
-correct — the conformance kit ships with the package:
+`TaskStore` has five methods. You do not need to guess whether your
+implementation is correct, because the conformance kit is part of the package:
 
 ```ts
 import { describe, it } from "vitest";
@@ -348,31 +358,37 @@ runTaskStoreConformance(
 );
 ```
 
-It has no dependencies and no opinion about your test runner; pass `describe`
-and `it` from whichever you use. If you would rather not involve one at all,
-`checkTaskStore(name, factory)` runs the same checks and hands back a report.
+The kit has no dependencies and works with any test runner. Pass the `describe`
+and `it` functions of the runner you use. If you prefer not to use a runner,
+`checkTaskStore(name, factory)` runs the same checks and returns a report.
 
-The factory is called once per check and must return a fresh store each time;
-the kit rejects a reused instance. Give it an `advanceTime(ms)` (and a `now()` returning where that clock is,
-unless it starts at `2026-01-01T00:00:00Z`) if your store
-has a clock seam, and `reopen()` if a new instance can reconnect to the same
-backing data. Without those seams, the TTL or cross-instance durability checks
-are reported as skipped rather than quietly passing. Runner integrations must
-provide `runner.skip(context, reason)` to record a real skip; if they do not,
-a missing optional seam fails with an actionable message instead of producing
-a false green. The reopen path exercises a full partial-input round and proves
-that live request/response maps are cleared while `usedInputKeys` remains
-durable across both reopen boundaries.
+The factory runs once per check and must return a new store each time. The kit
+rejects a store instance that is reused. Add these optional parts if your store
+supports them:
 
-Every factory, check, `close()` and `dispose()` operation has a 10-second
-deadline by default (`timeoutMs` changes it). Cleanup failures are check
-failures; they are never swallowed.
+- `advanceTime(ms)`, if your store has a clock you can control. Also add
+  `now()`, which returns the time of that clock, unless the clock starts at
+  `2026-01-01T00:00:00Z`.
+- `reopen()`, if a new instance can reconnect to the same stored data.
 
-`TaskPatch` follows ordinary object-spread visibility: only enumerable own
-string-keyed properties participate. For those properties, `undefined` means
-delete rather than leave unchanged; the kit pins both parts of that rule.
+Without them, the kit reports the TTL checks or the cross-instance durability
+checks as skipped. It does not let them pass silently. To record a real skip,
+your runner integration must provide `runner.skip(context, reason)`. If it does
+not, a missing optional part fails with a clear message, so you never get a
+false pass. The reopen checks run a full partial-input round. They confirm that
+the live request and response maps are cleared, and that `usedInputKeys` stays
+saved across both reopen steps.
 
-Publish it, open an issue, and it gets linked from these docs.
+Every factory call, check, `close()` and `dispose()` has a 10-second limit by
+default. Change it with `timeoutMs`. A failure during cleanup counts as a failed
+check, and the kit never hides it.
+
+`TaskPatch` follows the visibility rules of object spread. Only enumerable own
+properties with string keys count. For those properties, `undefined` means
+"delete the field", not "leave it unchanged". The kit tests both parts of this
+rule.
+
+If you publish a store, open an issue and we can link it from these docs.
 
 ## Development
 
