@@ -420,6 +420,7 @@ function isElicitationRequest(value: Record<string, unknown>): boolean {
   const schema = params.requestedSchema;
   return (
     schema.type === "object" &&
+    isOptional(schema, "$schema", (entry) => typeof entry === "string") &&
     isObject(schema.properties) &&
     Object.values(schema.properties).every(isPrimitiveSchema) &&
     isOptional(schema, "required", isStringArray)

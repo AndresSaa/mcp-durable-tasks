@@ -216,6 +216,7 @@ interface ElicitationInputRequest {
         mode?: "form";
         message: string;
         requestedSchema: {
+          $schema?: string;
           type: "object";
           properties: Record<string, PrimitiveSchemaDefinition>;
           required?: readonly string[];

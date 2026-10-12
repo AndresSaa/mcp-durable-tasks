@@ -183,15 +183,23 @@ links and embedded resources there too, because it reused the block set of a
 tool result's `content`, which is MCP's wider `ContentBlock`. Such a request
 parked the task and made every `tasks/get` non-conforming, and such a result
 resumed the worker. Both are now refused with `TypeError`; inside a
-`tool_result`, `content` still accepts the full `ContentBlock` set.
+`tool_result`, `content` still accepts the full `ContentBlock` set. Likewise,
+a form elicitation's `requestedSchema.$schema`, which both `schema.json` and
+`spec.types.ts` type as a string, is refused when present with any other
+type.
 
 With these aligned, the check and the snapshot agree except in these places:
 
 - The engine enforces what the schema states only as a `format` annotation or
   in prose: Base64 for binary content, a parseable URL for URL elicitation and
   `file://` for roots.
-- The engine accepts any finite number as an elicitation value, as
-  `spec.types.ts` declares; the generated `schema.json` narrows it to integer.
+- Where `spec.types.ts` declares `number` and the generated `schema.json`
+  narrows it to `integer`, the engine follows the TypeScript and accepts any
+  finite number: an elicitation response value, and a form elicitation's
+  `minLength`/`maxLength` (string fields) and `minItems`/`maxItems`
+  (multi-select fields). A fractional value in one of those limits therefore
+  reaches `tasks/get` and fails the generated schema; it does not fail the
+  TypeScript definition that upstream declares authoritative.
 - Found while aligning the three rules above and left for a decision, pinned
   in the same test file: the engine refuses a tool `execution.taskSupport`
   outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the

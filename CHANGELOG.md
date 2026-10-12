@@ -43,6 +43,11 @@ either is a major version.
   a result the schema rejects; it now throws `TypeError` and nothing is
   written. Both blocks remain valid inside a `tool_result`'s `content`. The
   exported types already excluded them.
+- **Breaking:** a form elicitation whose `requestedSchema.$schema` is present
+  but not a string is now refused by `requestInput()` with `TypeError`. Both
+  the stable schema and its TypeScript source type it as a string; it used to
+  be accepted and stored, and every `tasks/get` for the task then failed
+  schema validation.
 
 ### Changed
 

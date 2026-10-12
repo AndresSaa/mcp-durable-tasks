@@ -989,6 +989,34 @@ describe("where the generated schema is narrower than its TypeScript source", ()
       "content?: { [key: string]: string | number | boolean | string[] };",
     );
   });
+
+  // `StringSchema.minLength`/`maxLength` and the multi-select enums'
+  // `minItems`/`maxItems` are `number` in spec.types.ts and `integer` in
+  // schema.json. Same ruling: the engine follows the TypeScript.
+  it.each([
+    ["minLength", { type: "string", minLength: 1.5 }],
+    ["maxLength", { type: "string", maxLength: 2.5 }],
+    [
+      "minItems",
+      { type: "array", items: { type: "string", enum: ["a"] }, minItems: 0.5 },
+    ],
+    [
+      "maxItems",
+      {
+        type: "array",
+        items: { anyOf: [{ const: "a", title: "A" }] },
+        maxItems: 1.5,
+      },
+    ],
+  ])("accepts a fractional %s the JSON Schema rejects", (field, property) => {
+    const request = elicit({
+      message: "?",
+      requestedSchema: { type: "object", properties: { p: property } },
+    });
+    expect(isInputRequest(request)).toBe(true);
+    violates("InputRequest", request);
+    expect(fixture("spec.types.ts")).toContain(`${field}?: number;`);
+  });
 });
 
 describe("divergences pinned for a decision, not deliberate", () => {
@@ -1144,6 +1172,41 @@ describe("fixed: input validation accepts these 2026-07-28 shapes", () => {
     };
     conforms("CreateMessageResult", response);
     expect(engineAcceptsResponse(SAMPLING, response)).toBe(true);
+  });
+});
+
+describe("fixed: a form elicitation's requestedSchema.$schema must be a string", () => {
+  // Both the generated schema and spec.types.ts (`$schema?: string`) type it
+  // as a string, so refusing anything else cannot refuse a shape the
+  // TypeScript allows.
+  const withSchema = ($schema: unknown) =>
+    elicit({
+      message: "?",
+      requestedSchema: { $schema, type: "object", properties: {} },
+    });
+
+  it("refuses a non-string $schema, as both definitions do", () => {
+    for (const $schema of [7, null, {}, ["x"]]) {
+      const request = withSchema($schema);
+      expect(isInputRequest(request)).toBe(false);
+      violates("InputRequest", request);
+    }
+    expect(fixture("spec.types.ts")).toMatch(
+      /requestedSchema: \{\s+\$schema\?: string;/,
+    );
+  });
+
+  it("still accepts a string $schema, and one that is absent", () => {
+    for (const request of [
+      withSchema("https://json-schema.org/draft/2020-12/schema"),
+      elicit({
+        message: "?",
+        requestedSchema: { type: "object", properties: {} },
+      }),
+    ]) {
+      expect(isInputRequest(request)).toBe(true);
+      conforms("InputRequest", request);
+    }
   });
 });
 
