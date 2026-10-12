@@ -1223,10 +1223,10 @@ packages:
       }
     engines: { node: 18 || 20 || >=22 }
 
-  brace-expansion@5.0.9:
+  brace-expansion@5.0.12:
     resolution:
       {
-        integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==,
+        integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==,
       }
     engines: { node: 20 || >=22 }
 
@@ -1660,10 +1660,10 @@ packages:
         integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==,
       }
 
-  hono@4.13.1:
+  hono@4.13.13:
     resolution:
       {
-        integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==,
+        integrity: sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA==,
       }
     engines: { node: ">=16.9.0" }
 
@@ -2286,10 +2286,10 @@ packages:
       }
     engines: { node: ">=8" }
 
-  source-map-js@1.2.1:
+  source-map-js@1.2.2:
     resolution:
       {
-        integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==,
+        integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==,
       }
     engines: { node: ">=0.10.0" }
 
@@ -2820,9 +2820,9 @@ snapshots:
       "@eslint/core": 1.2.1
       levn: 0.4.1
 
-  "@hono/node-server@1.19.17(hono@4.13.1)":
+  "@hono/node-server@1.19.17(hono@4.13.13)":
     dependencies:
-      hono: 4.13.1
+      hono: 4.13.13
 
   "@humanfs/core@0.19.2":
     dependencies:
@@ -2884,9 +2884,9 @@ snapshots:
 
   "@modelcontextprotocol/node@2.1.1(@modelcontextprotocol/server@2.3.1)":
     dependencies:
-      "@hono/node-server": 1.19.17(hono@4.13.1)
+      "@hono/node-server": 1.19.17(hono@4.13.13)
       "@modelcontextprotocol/server": 2.3.1
-      hono: 4.13.1
+      hono: 4.13.13
 
   "@modelcontextprotocol/server@2.3.1":
     dependencies:
@@ -3204,7 +3204,7 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  brace-expansion@5.0.9:
+  brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.4
 
@@ -3470,7 +3470,7 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono@4.13.1: {}
+  hono@4.13.13: {}
 
   hookified@1.15.1: {}
 
@@ -3586,7 +3586,7 @@ snapshots:
     dependencies:
       "@babel/parser": 7.29.8
       "@babel/types": 7.29.8
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   marked-terminal@7.3.0(marked@9.1.6):
     dependencies:
@@ -3603,7 +3603,7 @@ snapshots:
 
   minimatch@10.2.6:
     dependencies:
-      brace-expansion: 5.0.9
+      brace-expansion: 5.0.12
 
   mlly@1.8.2:
     dependencies:
@@ -3696,7 +3696,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   prelude-ls@1.2.1: {}
 
@@ -3795,7 +3795,7 @@ snapshots:
     dependencies:
       unicode-emoji-modifier-base: 1.0.0
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   source-map@0.7.6: {}
 
