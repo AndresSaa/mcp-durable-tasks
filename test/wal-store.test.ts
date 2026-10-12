@@ -383,6 +383,43 @@ describe("compaction", () => {
     expect(await reopened.get("t1")).toBeUndefined();
   });
 
+  it("keeps memory and the log in agreement when the clock steps back after a compaction (I8)", async () => {
+    const dir = freshDir();
+    const time = clock();
+    const store = open(dir, { now: time.now, compactEvery: null });
+    await store.create(record({ taskId: "short", ttlMs: 10_000 }));
+    await store.create(record({ taskId: "long", ttlMs: null }));
+
+    time.advance(10_000);
+    store.compact(); // "short" is expired by this clock: not in the snapshot.
+    time.advance(-5_000);
+
+    const live = await store.get("short");
+    await store.close();
+    const reopened = open(dir, { now: time.now });
+
+    // Whatever the live store answers, the reopened one must answer the same.
+    expect(await reopened.get("short")).toEqual(live);
+    expect(live).toBeUndefined();
+    expect(await reopened.get("long")).toMatchObject({ taskId: "long" });
+  });
+
+  it("keeps memory and the log in agreement when everything expired before a compaction", async () => {
+    const dir = freshDir();
+    const time = clock();
+    const store = open(dir, { now: time.now, compactEvery: null });
+    await store.create(record({ ttlMs: 10_000 }));
+
+    time.advance(10_000);
+    store.compact();
+    time.advance(-5_000);
+
+    const live = await store.get("t1");
+    await store.close();
+    const reopened = open(dir, { now: time.now });
+    expect(await reopened.get("t1")).toEqual(live);
+  });
+
   it("reports a usable automatic-compaction failure without rejecting the committed update", async () => {
     const dir = freshDir();
     const initial = record();

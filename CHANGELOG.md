@@ -52,6 +52,10 @@ either is a major version.
   integer of at least 1, checked before the log is opened; `NaN` used to
   disable automatic compaction silently, and 0 or a negative count compacted
   after every mutation.
+- `WalTaskStore.compact()` now drops from memory the expired tasks its
+  snapshot leaves out. They used to stay indexed after the checkpoint had
+  removed them from replay, so a clock that stepped back after a compaction
+  made `get()` return a task that was gone after the next reopen.
 - `cancelTask()` on a task with no worker in this process no longer leaks an
   `AbortController` for the life of the process. The raised signal is still
   kept for a worker that reads it later, but is now released when the task's

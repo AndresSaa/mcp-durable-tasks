@@ -261,7 +261,10 @@ only enumerable own string-keyed patch properties. `undefined` deletes a field.
 CAS protects the durable record; it does not route process-local worker effects.
 
 `WalTaskStore` compaction rewrites a snapshot of all live records before
-checkpointing and compacting old entries. A terminal transition is not itself
+checkpointing and compacting old entries. Records already expired by its
+clock are left out of the snapshot and, once the checkpoint commits, dropped
+from the in-memory index too, so memory never holds a task the next open will
+not replay, even if the clock later steps back. A terminal transition is not itself
 a checkpoint: doing that would erase the terminal result on reopen. Automatic
 compaction runs after its triggering mutation is durable; its failure is
 observable without turning that committed mutation into a rejection.

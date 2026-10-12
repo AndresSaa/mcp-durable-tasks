@@ -229,9 +229,12 @@ export class WalTaskStore implements TaskStore {
   compact(): void {
     this.#assertOpen();
     const now = this.#now();
-    const live = [...this.#tasks.values()].filter(
-      (record) => !hasExpired(record, now),
-    );
+    const live: TaskRecord[] = [];
+    const expired: string[] = [];
+    for (const [taskId, record] of this.#tasks) {
+      if (hasExpired(record, now)) expired.push(taskId);
+      else live.push(record);
+    }
 
     if (live.length === 0) {
       // Nothing to preserve: checkpoint past the whole log and reclaim it.
@@ -248,6 +251,11 @@ export class WalTaskStore implements TaskStore {
     );
     // Everything strictly before the snapshot is now superseded by it.
     this.#wal.checkpoint(seqs[0] - 1);
+    // From here replay no longer sees the tasks the snapshot left out, so the
+    // index must not either (I8). Keeping them would let a clock that steps
+    // back serve a task from memory that the next open has already lost.
+    // Before the checkpoint they are still in the log, and stay indexed.
+    for (const taskId of expired) this.#tasks.delete(taskId);
     this.#wal.compact();
   }
 

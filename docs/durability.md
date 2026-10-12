@@ -119,6 +119,12 @@ The snapshot sequence is crash-safe by construction:
 - Checkpoint replacement and compaction are atomic tmp-then-rename in
   `process-wal`; a failed rename changes nothing.
 
+The snapshot holds only tasks that have not expired by the store's clock.
+Once the checkpoint commits, replay can no longer see the expired ones, so
+they are removed from the in-memory index at that point as well. Until this
+was fixed, they stayed indexed: a clock that stepped back after a compaction
+made `get()` serve a task that the next open had already lost.
+
 A failed automatic compaction never fails the mutation that triggered it. That
 write was durable before compaction started, and reporting it as failed would
 be false. It is reported through `onCompactionError`, and if the failure left
