@@ -175,8 +175,17 @@ the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
   object.
 
 Each of the three is a relaxation: everything accepted before is still
-accepted. With them aligned, the check and the snapshot agree except in these
-places:
+accepted. One rule went the other way, because the check was wider than the
+revision. A sampling message's `content`, and a `CreateMessageResult`'s
+`content`, are `SamplingMessageContentBlock`s: text, image, audio, `tool_use`
+or `tool_result`, alone or in an array. The engine used to admit resource
+links and embedded resources there too, because it reused the block set of a
+tool result's `content`, which is MCP's wider `ContentBlock`. Such a request
+parked the task and made every `tasks/get` non-conforming, and such a result
+resumed the worker. Both are now refused with `TypeError`; inside a
+`tool_result`, `content` still accepts the full `ContentBlock` set.
+
+With these aligned, the check and the snapshot agree except in these places:
 
 - The engine enforces what the schema states only as a `format` annotation or
   in prose: Base64 for binary content, a parseable URL for URL elicitation and

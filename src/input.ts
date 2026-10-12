@@ -128,8 +128,8 @@ function isEmbeddedResource(value: Record<string, unknown>): boolean {
   );
 }
 
-function isToolResultContentBlock(value: unknown): boolean {
-  if (!isObject(value)) return false;
+/** Text, image or audio: the blocks both content sets below share. */
+function isMediaContentBlock(value: Record<string, unknown>): boolean {
   switch (value.type) {
     case "text":
       return typeof value.text === "string" && hasContentMetadata(value);
@@ -140,18 +140,35 @@ function isToolResultContentBlock(value: unknown): boolean {
         typeof value.mimeType === "string" &&
         hasContentMetadata(value)
       );
-    case "resource_link":
-      return isResourceLink(value);
-    case "resource":
-      return isEmbeddedResource(value);
     default:
       return false;
   }
 }
 
+/**
+ * MCP's `ContentBlock`, which is what a tool result's `content` carries:
+ * media plus resource links and embedded resources.
+ */
+function isToolResultContentBlock(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  switch (value.type) {
+    case "resource_link":
+      return isResourceLink(value);
+    case "resource":
+      return isEmbeddedResource(value);
+    default:
+      return isMediaContentBlock(value);
+  }
+}
+
+/**
+ * `SamplingMessageContentBlock`: media, `tool_use` and `tool_result` only.
+ * Resource links and embedded resources are not part of it; they may appear
+ * only nested inside a `tool_result`'s `content`.
+ */
 function isSamplingContentBlock(value: unknown): boolean {
   if (!isObject(value)) return false;
-  if (isToolResultContentBlock(value)) return true;
+  if (isMediaContentBlock(value)) return true;
   if (value.type === "tool_use") {
     return (
       typeof value.id === "string" &&

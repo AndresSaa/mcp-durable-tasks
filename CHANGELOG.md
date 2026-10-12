@@ -34,6 +34,15 @@ either is a major version.
   the URL elicitation `elicitationId` is optional, `outputSchema` is a plain
   `JsonObject`, and `structuredContent` is a `JsonValue`. Code that reads
   `structuredContent` from a response as an object must now narrow it first.
+- **Breaking:** a sampling message's `content` in `requestInput()`, and the
+  `content` of the sampling result that answers it in `updateTask()`, are now
+  limited to the `2026-07-28` `SamplingMessageContentBlock` set: text, image,
+  audio, `tool_use` and `tool_result`. A `resource_link` or embedded
+  `resource` block there used to be accepted, which parked the task with a
+  request the schema rejects on every `tasks/get`, or resumed the worker with
+  a result the schema rejects; it now throws `TypeError` and nothing is
+  written. Both blocks remain valid inside a `tool_result`'s `content`. The
+  exported types already excluded them.
 
 ### Changed
 

@@ -224,7 +224,10 @@ const answers = await task.requestInput({
   elicitation. Following `2026-07-28`, URL elicitation does not need an
   `elicitationId` (one that is present is kept), a tool `outputSchema` may be
   any JSON Schema object, and a tool result's `structuredContent` may be any
-  JSON value. The remaining differences from the schema are listed in the
+  JSON value. A sampling message, and the sampling result that answers it,
+  carry only text, image, audio, `tool_use` and `tool_result` blocks; resource
+  links and embedded resources are accepted only inside a `tool_result`'s
+  `content`. The remaining differences from the schema are listed in the
   [contract](contract.md#input-rounds).
 - **Keys are unique for the whole lifetime of the task**, including after it is
   terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
