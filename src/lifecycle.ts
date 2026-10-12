@@ -246,7 +246,9 @@ export class TaskLifecycle {
     if (record === undefined) throw new TaskNotFoundError(taskId);
     assertKnownStatus(record);
     if (!isTerminal(record.status)) {
-      this.#workers.abort(taskId, new TaskCancelled(taskId));
+      // The record bounds how long the raised signal is kept for a worker
+      // that has not read it yet: until the task ends or expires.
+      this.#workers.abort(taskId, new TaskCancelled(taskId), record);
     }
     return { resultType: "complete" };
   }

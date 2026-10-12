@@ -52,6 +52,12 @@ either is a major version.
   integer of at least 1, checked before the log is opened; `NaN` used to
   disable automatic compaction silently, and 0 or a negative count compacted
   after every mutation.
+- `cancelTask()` on a task with no worker in this process no longer leaks an
+  `AbortController` for the life of the process. The raised signal is still
+  kept for a worker that reads it later, but is now released when the task's
+  TTL elapses, not only on a terminal transition through the same lifecycle
+  or on `close()`. The same expiry now also releases the signal of a worker
+  that read it and then stopped writing.
 - A stored record whose `status` is not one of the five task states is now
   reported as corrupt, like a record with a missing or misplaced payload.
   `getTask()` used to resolve `undefined` for it, and `complete()`,

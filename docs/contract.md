@@ -278,6 +278,15 @@ worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance.
 After a crash, the application resumes from durable state; JavaScript
 continuations are not durable.
 
+That process-local state is bounded by the task's life. A lifecycle releases
+what it holds for a task (the raised signal of a cancellation whose worker is
+not, or not yet, running here, and any parked waiter) when the task reaches a
+terminal state through it, when the task's TTL elapses by its clock, or on
+`close()`. Expiry is tracked from the record it last read or committed, so a
+TTL revised by another instance is not seen; the worst case is that a signal
+raised here is dropped at the old expiry, before a worker that never read it
+starts.
+
 That affinity is the deployment model the extension itself defines. Its
 Streamable HTTP binding requires the client to set the `Mcp-Name` header to
 `params.taskId` on every `tasks/get`, `tasks/update` and `tasks/cancel`, so

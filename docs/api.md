@@ -147,6 +147,13 @@ other than `cancelled` if the work finished first.
 
 A worker that honours the signal calls `handle.cancelled()`. One that ignores
 it leaves the task to its TTL. Cancelling an already-terminal task is a no-op.
+
+The raised signal is process-local state. A worker in this process that reads
+`handle.signal` after the cancel still finds it raised, for as long as the
+task lives: the lifecycle keeps it until the task ends through this lifecycle,
+until its TTL elapses (by the lifecycle's clock, following any TTL revised
+through this lifecycle), or until `close()`. A task with `ttlMs: null` that
+never ends here keeps it until `close()`.
 The acknowledgement is `{ resultType: "complete" }` in both cases.
 
 #### `close()`

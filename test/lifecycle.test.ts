@@ -977,6 +977,48 @@ describe("cancellation", () => {
     await expect(parked).rejects.toBeInstanceOf(TaskCancelled);
   });
 
+  it("does not keep a signal for a task with no local worker past its expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, store, time } = build();
+      const ids: string[] = [];
+      for (let index = 0; index < 50; index += 1) {
+        const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+        await engine.cancelTask(taskId);
+        ids.push(taskId);
+      }
+
+      time.advance(1_000);
+      vi.advanceTimersByTime(1_000);
+      await store.sweep(time.now());
+
+      // The aborted controller that cancelTask created is gone: a handle for
+      // the same id now reads a fresh, unraised signal.
+      for (const taskId of ids) {
+        expect(engine.handle(taskId).signal.aborted).toBe(false);
+      }
+      await engine.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still raises the signal for a worker that reads it after the cancel", async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, time } = build();
+      const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+      await engine.cancelTask(taskId);
+
+      time.advance(999);
+      vi.advanceTimersByTime(999);
+      expect(engine.handle(taskId).signal.aborted).toBe(true);
+      await engine.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is a no-op on an already terminal task", async () => {
     const { engine } = build();
     const { taskId } = await engine.createTask();
