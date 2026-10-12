@@ -347,7 +347,8 @@ and `it` from whichever you use. If you would rather not involve one at all,
 `checkTaskStore(name, factory)` runs the same checks and hands back a report.
 
 The factory is called once per check and must return a fresh store each time;
-the kit rejects a reused instance. Give it an `advanceTime(ms)` if your store
+the kit rejects a reused instance. Give it an `advanceTime(ms)` (and a `now()` returning where that clock is,
+unless it starts at `2026-01-01T00:00:00Z`) if your store
 has a clock seam, and `reopen()` if a new instance can reconnect to the same
 backing data. Without those seams, the TTL or cross-instance durability checks
 are reported as skipped rather than quietly passing. Runner integrations must

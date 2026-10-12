@@ -464,7 +464,9 @@ question without a package change.
   `schema/2026-07-28/`; it also reports, without ever failing, whether the
   upstream `draft` has diverged. It is run by hand and before a tag, not in CI.
 - The conformance kit runs against both included stores and deliberately broken
-  stores. Optional clock and reopen capabilities are reported as real skips,
+  stores (undefined ignored, `null` read as delete, dropped `error`, frozen
+  `lastUpdatedAt`, dropped fields, no CAS, live references), and works with any
+  clock origin the subject declares through `now()`. Optional clock and reopen capabilities are reported as real skips,
   never false passes.
 - Crash tests use child processes, explicit IPC commit points and real
   `SIGKILL`; they load `dist/`, not source files.

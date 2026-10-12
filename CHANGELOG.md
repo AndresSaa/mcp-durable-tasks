@@ -12,6 +12,14 @@ either is a major version.
 
 ### Fixed
 
+- The conformance kit no longer requires the store's clock to start inside
+  `2026-01-01T00:00:00Z` plus one second. `TaskStoreUnderTest` gains an
+  optional `now()` (epoch milliseconds, next to `advanceTime`); when declared,
+  the TTL checks stamp their tasks from it, so a clock that starts at
+  `Date.now()` or anywhere else passes. Without `now()` behaviour is unchanged
+  (the old fixed origin is assumed) and the TTL failures now name the missing
+  `now()` instead of reporting a store bug. Additive: no existing factory
+  needs a change.
 - **Breaking:** `ttlMs` and `pollIntervalMs` must now be integer milliseconds
   within the safe-integer range, as the stable `2026-07-28` schema requires.
   `createTask()`, `progress()` and the `defaultTtlMs` / `defaultPollIntervalMs`
@@ -77,6 +85,14 @@ either is a major version.
 
 ### Changed
 
+- **Behaviour change:** the conformance kit gained four checks, so a third-party
+  store that passed before can now fail. An update with `ttlMs: null` must
+  store `null` (only `undefined` deletes a field); an update that sets
+  `status: "failed"` with an `error` must round-trip the error; an update that
+  sets `lastUpdatedAt` must persist it; and a record with every field
+  populated must round-trip through `create()`, `update()` and `get()`. Each
+  is caught by a deliberately broken store in the kit's own tests. Both
+  included stores still pass.
 - Defined the gated pre-1.0 roadmap: a change emitter for the optional
   `notifications/tasks` is preferred for `0.3.0` (the engine emits each
   committed change; delivery stays in the host), followed by a first-party
