@@ -125,7 +125,7 @@ at.
 
 ## Why the compatibility seam stays in the host
 
-On a 2026-07-28 server built with `@modelcontextprotocol/server` v2,
+On a 2026-07-28 server built with `@modelcontextprotocol/server` before 2.3.0,
 `tasks/get` and `tasks/cancel` cannot be served through registered SDK handlers:
 both names belong to the retired 2025-11-25 method registry, and the
 protocol-era gate answers `-32601` before any handler runs — including
@@ -144,10 +144,11 @@ That was written from the assumption that the Inspector did the same thing, and
 the assumption was never checked; it does not. The measurement and the exact
 dispatcher code are summarised in the
 [SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility). The
-package does not ship either seam: the verified HTTP route belongs to the host,
-and A6 may eventually remove the need upstream. The planned `/client` follower
-starts after a task handle; it does not rename methods or take ownership of the
-transport.
+package does not ship either seam: the verified HTTP route belongs to the host.
+Since `@modelcontextprotocol/server` 2.3.0 the need is removed upstream for
+handlers registered with an explicit schema (A6); that path has not yet been
+re-measured here. The package has no client entry point either: the requester
+side belongs to the official `@modelcontextprotocol/ext-tasks/client`.
 
 ## Cost profile
 

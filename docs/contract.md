@@ -26,16 +26,21 @@ TypeScript surface is in [api.md](api.md), and storage guarantees are in
 The shipped package implements the server-side state engine and Task Store role
 of the MCP Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). It also
 gives a server's worker a `TaskHandle` for durable progress, input, cancellation
-and terminal transitions. The only planned client-side exception is a narrow
-task follower that starts after the host already has a task handle
-(`CreateTaskResult` or task ID); it does not issue the original MCP request or
-become a general MCP client. The package does not own transport,
-authentication, protocol negotiation or worker scheduling.
+and terminal transitions. It is server-side only: the requester side of the
+extension is covered by the official
+[`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks)
+package and its `/client` entry point (see
+[the client-follower decision](#decision-no-client-follower)). The package
+does not own transport, authentication, protocol negotiation or worker
+scheduling.
 
-The sources for protocol behavior are, in order:
+The targeted protocol revision is the stable `2026-07-28` snapshot of the
+extension. The upstream `draft` revision is a moving branch and is not a
+conformance target. The sources for protocol behavior are, in order:
 
-1. [Tasks extension specification](https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks.html)
-2. [Official extension schema and TypeScript types](https://github.com/modelcontextprotocol/ext-tasks/tree/main/schema)
+1. [Tasks extension specification, revision `2026-07-28`](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks.html)
+2. [Official extension schema for `2026-07-28`](https://github.com/modelcontextprotocol/ext-tasks/blob/main/schema/2026-07-28/schema.json)
+   and its [TypeScript source](https://github.com/modelcontextprotocol/ext-tasks/blob/main/schema/2026-07-28/schema.ts)
 3. [SEP-2663](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2663-tasks-extension.md)
 4. [TypeScript SDK v2 migration notes](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28)
 5. The source of the exact SDK version being integrated
@@ -183,12 +188,43 @@ or multi-instance servers need a `TaskStore` backed by their shared database.
 
 The durable record may be shared, but a live worker's `AbortSignal` and the
 promise returned by `requestInput()` belong to that worker process. While the
-worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance
-through sticky routing or host-provided coordination. After a crash, the
-application resumes from durable state; JavaScript continuations are not
-durable.
+worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance.
+After a crash, the application resumes from durable state; JavaScript
+continuations are not durable.
+
+That affinity is the deployment model the extension itself defines. Its
+Streamable HTTP binding requires the client to set the `Mcp-Name` header to
+`params.taskId` on every `tasks/get`, `tasks/update` and `tasks/cancel`, so
+that intermediaries and load balancers can route each request for a task to the
+instance holding its state, "which is typically required for correctness"
+([spec, _Streamable HTTP: Routing Headers_](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks.html#streamable-http-routing-headers)).
+Routing on that header is configured in the host's HTTP infrastructure; this
+package does not read headers, own the transport or embed a broker. A host that
+cannot route by task ID needs its own coordination between instances.
 
 ## TypeScript SDK v2 compatibility
+
+### Upstream fix for the era gate (A6)
+
+The era gate described below was fixed upstream by
+[typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)
+(merged 30 September 2026, closing
+[#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598)).
+The fix is present in the published `@modelcontextprotocol/server` 2.3.0 and
+2.3.1 tarballs and absent from 2.2.0, checked by inspecting each tarball's
+bundled source. Its scope is narrow: a `tasks/get` or `tasks/cancel` handler
+registered **with an explicit schema**
+(`setRequestHandler(method, schemas, handler)`) is exempt from the inbound era
+gate. Typed registration and `fallbackRequestHandler` remain era-gated for those
+two names.
+
+This repository has not yet re-measured that path end to end; the repository
+still pins 2.0.0, and the example and reproductions migrate in a separate
+change. Until then, the 2.0.0 measurement below is the evidence this repository
+holds, and the host workaround in the crash-recovery example remains as
+written.
+
+### Measured with 2.0.0
 
 Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
 `2026-07-28` server:
@@ -210,29 +246,28 @@ Measured on 10 August 2026 with `@modelcontextprotocol/server` 2.0.0 and a
   `2026-07-28` server. It accepts and preserves an explicit `"task"` value.
 
 This package emits every discriminator explicitly, but it does **not** ship a
-transport rename seam. A host using this SDK version still needs its own
-narrowly scoped workaround. A6 may make that workaround unnecessary upstream;
-it does not add an SDK compatibility layer here. The planned `/client` follower
-starts after the host has a task handle and must not grow into transport
-ownership, authentication or version negotiation.
+transport rename seam or any SDK compatibility layer. A host on an SDK version
+without the upstream fix still needs its own narrowly scoped workaround; a host
+on 2.3.0 or later is expected to register the three methods with explicit
+schemas instead, subject to the pending re-measurement above.
 
 ## Extension conformance questions
 
 These are questions for `modelcontextprotocol/ext-tasks`, not undocumented
 features to invent locally:
 
-| ID  | Status   | Question or settled interpretation                                                                                                                                         |
-| --- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | Open     | The extension overview uses `-32003` for missing client capability, while the SDK v2 migration guide uses `-32021` for `2026-07-28`. Which code governs the extension?     |
-| A2  | Settled  | Partial input response sets are legal; the server ignores non-live keys.                                                                                                   |
-| A3  | Settled  | TTL remains anchored to `createdAt`; changing it does not restart the clock.                                                                                               |
-| A4  | Settled  | Cancellation is eventually consistent and does not force `cancelled`.                                                                                                      |
-| A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                             |
-| A6  | Open     | Should a server declaring the Tasks extension bypass the SDK era gate for `tasks/get` and `tasks/cancel`, or is transport rewriting expected?                              |
-| A7  | Open     | If a server implements optional `notifications/tasks`, are notifications replayed after a crash or is polling always authoritative?                                        |
-| A8  | Open bug | The generated JSON Schema does not preserve the SDK input request/response unions. Should the schema inline or bundle those definitions?                                   |
-| A9  | Open     | Does the extension assume sticky routing, host coordination, or another delivery mechanism for input/cancellation while a worker lives on another instance?                |
-| A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? |
+| ID  | Status   | Question or settled interpretation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Settled  | Missing client capability is `-32021`. Every occurrence in the stable `2026-07-28` specification uses it, and its error-handling section requires it for non-declaring clients issuing `tasks/get`, `tasks/update` or `tasks/cancel`, or requesting task notifications on `subscriptions/listen`. The extension overview page still shows `-32003`; that is an upstream documentation mismatch to report, not an open protocol question.                                                                                                                                           |
+| A2  | Settled  | Partial input response sets are legal; the server ignores non-live keys.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| A3  | Settled  | TTL remains anchored to `createdAt`; changing it does not restart the clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| A4  | Settled  | Cancellation is eventually consistent and does not force `cancelled`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| A6  | Settled  | Settled upstream in the SDK, not by a host rewrite: since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), `tasks/get` and `tasks/cancel` handlers registered with an explicit schema bypass the era gate. Typed registration and `fallbackRequestHandler` stay gated. Not yet re-measured in this repository; see [the compatibility profile](#typescript-sdk-v2-compatibility).                                                                                                                   |
+| A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. The answer fixes the semantics of the planned `0.3.0` change emitter.                                                                                                                                                                        |
+| A8  | Open     | The vendored fixtures are the pre-stable `draft` snapshot, where `InputRequest`/`InputResponse` degrade to unconstrained branches. Upstream closed [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) as completed, and the stable `2026-07-28` `schema.json` references concrete sampling, roots and elicitation definitions and requires `resultType` on results. Open here until the fixtures are re-pinned to `2026-07-28` and runtime input validation is checked against those definitions.                                                         |
+| A9  | Settled  | The extension defines the delivery mechanism: over Streamable HTTP the client sets `Mcp-Name` to `params.taskId` on `tasks/get`, `tasks/update` and `tasks/cancel`, so intermediaries can route every request for a task to the instance holding its state. Routing on it is host infrastructure; see [process boundaries](#process-boundaries).                                                                                                                                                                                                                                   |
+| A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? The bundled `@modelcontextprotocol/server` 2.3.1 source still declares that default on its result schemas; the codec path has not been re-measured. [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637) was closed as a duplicate of the SDK's open Tasks-extension tracking issue ([#2189](https://github.com/modelcontextprotocol/typescript-sdk/issues/2189)). |
 
 Before filing or updating the conformance report, re-read the current spec,
 SDK source and open `ext-tasks` pull requests. An upstream change may close a
@@ -242,6 +277,8 @@ question without a package change.
 
 - Schema tests pin the official `schema.json` and `schema.ts` fixtures and make
   protocol drift explicit. `pnpm check:schema` performs the network comparison.
+  The fixtures and that check still track the pre-stable `draft` snapshot;
+  re-pinning both to the immutable `2026-07-28` snapshot is a separate change.
 - The conformance kit runs against both included stores and deliberately broken
   stores. Optional clock and reopen capabilities are reported as real skips,
   never false passes.
@@ -264,13 +301,15 @@ question without a package change.
   trusted publishing, OIDC and provenance.
 - `0.2.1`: documentation-only maintenance patch that republishes the corrected
   README to npm; no engine, API or dependency changes.
-- `0.3.0` (preferred next feature): optional
-  `mcp-durable-tasks/client` task follower. It starts from an injected
-  `CreateTaskResult` or task ID and a structural adapter for `tasks/get`,
-  `tasks/update` and `tasks/cancel`; it does not issue `tools/call`, import an
-  MCP SDK, own transport/authentication, or negotiate a protocol version. Its
-  readiness gate requires a fresh A6/A10 measurement and either public SDK
-  support or a documented user need that accepts the injected boundary.
+- `0.2.x`: maintenance patches for documentation, the examples and their SDK
+  alignment; no engine or API changes.
+- `0.3.0` (preferred next feature): a change emitter for
+  `notifications/tasks` on `TaskLifecycle`. After each committed change made
+  through that lifecycle, it emits the same closed `DetailedTask` projection
+  that `tasks/get` returns. It **emits, it does not deliver**: handling
+  `subscriptions/listen`, the acknowledgement and writing to a transport stay
+  in the host. Its replay semantics depend on A7, so its readiness gate is an
+  A7 answer upstream or an explicit package decision recorded here. Not built.
 - `0.4.0` (preferred following feature): first-party `NodeSqliteTaskStore` on
   `mcp-durable-tasks/sqlite`, using Node's built-in `node:sqlite` (subpath
   requires Node 22.13+; the main entry point stays on Node 22). It owns a
@@ -278,16 +317,53 @@ question without a package change.
   CAS; it is not a remote, hosted or application-database adapter. The
   community-store non-goal narrows in that release to this one exception.
 - The `0.3.0`/`0.4.0` assignment is delivery order, not an irrevocable version
-  reservation. If the client gate remains blocked while SQLite has a
+  reservation. If the emitter gate remains blocked while SQLite has a
   demonstrated need and is otherwise ready, a separate contract-only decision
-  may assign SQLite to the next minor and reschedule the client driver. That
-  decision updates this contract, `AGENTS.md` and the execution plan before a
-  feature worktree exists; implementation never changes the order implicitly.
+  may assign SQLite to the next minor. That decision updates this contract,
+  `AGENTS.md` and the execution plan before a feature worktree exists;
+  implementation never changes the order implicitly.
 - `1.0.0`: open extension questions are closed or recorded as explicit package
   decisions, and `TaskStore`/`TaskLifecycle` become frozen semver contracts.
 
 Before `1.0.0`, a breaking API change is a minor release with a clear changelog
 entry. After `1.0.0`, normal major-version rules apply.
+
+### Decision: no client follower
+
+Recorded on 12 October 2026 as the contract-only decision this section requires
+for any change to the roadmap order. It is not an implementation choice.
+
+The roadmap previously reserved `0.3.0` for an optional
+`mcp-durable-tasks/client` task follower. That follower is **removed** from the
+roadmap, not rescheduled, and `0.3.0` is reassigned to the change emitter
+above. The reasons:
+
+- The extension maintainers now publish
+  [`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks)
+  (first published 17 September 2026; `0.2.2` checked). Its `/client` entry
+  point drives tool calls, polling, input and recovery against `2026-07-28`
+  Tasks servers. That is the requester role the follower was meant to fill. A
+  second, unofficial client here would compete with the official one, and the
+  follower was only ever admitted as a narrow exception to the
+  [non-goal](#non-goals) against MCP clients.
+- The same package has no Task Store, lifecycle engine or `2026-07-28` server
+  binding: its `/receiver` entry point targets only `2025-11-25`, and
+  `/core/v2` holds wire schemas and type guards. The server-side gap this
+  package exists for is still open, so the roadmap stays on that side.
+- The follower's readiness gate depended on A6 and A10. A6 is now settled
+  upstream, which removes the strongest argument for a package-owned client
+  path rather than strengthening it.
+- `notifications/tasks` is the one optional server behavior the stable
+  specification adds that this package cannot express today, and only the
+  engine knows when a task changes. Emitting that change is in scope;
+  delivering it is transport and stays out.
+
+An open SDK pull request
+([typescript-sdk#2782](https://github.com/modelcontextprotocol/typescript-sdk/pull/2782),
+unmerged when this was written) proposes server and client Tasks subpaths with
+an in-memory store. If a server-side binding ships upstream, this package's
+role relative to it is reassessed in a new contract decision before further
+feature work.
 
 ## Non-goals
 
@@ -300,9 +376,10 @@ Without prior maintainer discussion, this repository does not add:
   `node:sqlite` is the only planned exception: a dedicated local file, no
   driver package, no URLs or credentials. SQLite adapters using any other
   driver remain community packages before and after that release;
-- a generic MCP client, transport wrapper or SDK compatibility layer. The
-  optional task follower described in the version contract is the only planned
-  client-side exception and starts after the host has a task handle;
+- any MCP client or task follower, transport wrapper or SDK compatibility
+  layer. The requester side is served by the official
+  `@modelcontextprotocol/ext-tasks` `/client` entry point
+  ([decision](#decision-no-client-follower));
 - the retired `2025-11-25` task vocabulary;
 - queues, retries, backoff, priorities, scheduling, cron or dead-letter logic;
 - a CLI, dashboard or replay viewer;

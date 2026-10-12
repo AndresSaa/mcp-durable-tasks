@@ -22,6 +22,14 @@ This is **a library you import into an MCP server** — not a server you add to
 task handles: the thing a server returns instead of blocking on work that takes
 minutes.
 
+It is the server-side counterpart of the official
+[`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks)
+package. Its `/client` entry point is how a requester calls a tool, polls the
+task and answers its input requests; this package is what the server behind it
+uses to create that task, keep its state and serve `tasks/get`, `tasks/update`
+and `tasks/cancel`. It targets the stable `2026-07-28` revision of the
+extension.
+
 ```ts
 import { TaskLifecycle, MemoryTaskStore } from "mcp-durable-tasks";
 
@@ -60,9 +68,12 @@ the test suite before you write the first one.
 protects the durable record when several instances can write it, but the
 promise `requestInput()` returns and the cancellation signal belong to the
 process running that worker. While a worker is live, `tasks/update` and
-`tasks/cancel` have to reach that instance — sticky routing, or coordination
-you provide. This library deliberately does not embed a broker or a queue. The
-specification does not define that delivery mechanism either; see
+`tasks/cancel` have to reach that instance. That is the model the extension
+itself specifies: over Streamable HTTP, clients send every `tasks/get`,
+`tasks/update` and `tasks/cancel` with an `Mcp-Name` header set to the task ID,
+precisely so that a load balancer can route each request for a task to the
+instance holding its state. Configure that routing in your HTTP layer; this
+library deliberately does not read headers or embed a broker or a queue. See
 [the process-boundary contract](docs/contract.md#process-boundaries).
 
 ## Contents
@@ -74,7 +85,7 @@ specification does not define that delivery mechanism either; see
 - [Official references](#official-references)
 - [What survives what](#what-survives-what)
 - [See it survive a crash](#see-it-survive-a-crash)
-- [Known gap in the official SDK](#known-gap-in-the-official-sdk)
+- [The official SDK's era gate](#the-official-sdks-era-gate)
 - [Writing your own store](#writing-your-own-store)
 - [Development](#development)
 - [License](#license)
@@ -91,7 +102,11 @@ long-lived npm token.
 
 The public API remains provisional until `1.0.0`; the version roadmap and open
 extension questions live in
-[the contract and conformance profile](docs/contract.md).
+[the contract and conformance profile](docs/contract.md). The next planned
+feature, not built yet, is a change emitter for the optional
+`notifications/tasks`: the engine emits each committed task change, and the
+host delivers it. There is no client entry point and none is planned; use
+`@modelcontextprotocol/ext-tasks/client` for the requester side.
 
 ## Install
 
@@ -144,9 +159,11 @@ The main entry point uses no Node built-ins, so the engine and
 ## Official references
 
 - [MCP Tasks extension overview](https://tasks.extensions.modelcontextprotocol.io/)
-- [Tasks extension draft specification](https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks.html)
+- [Tasks extension specification, revision 2026-07-28](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks.html)
 - [SEP-2663 proposal](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/seps/2663-tasks-extension.md)
-- [Official schema and TypeScript types](https://github.com/modelcontextprotocol/ext-tasks/tree/main/schema)
+- [Official schema for revision 2026-07-28](https://github.com/modelcontextprotocol/ext-tasks/blob/main/schema/2026-07-28/schema.json)
+- [`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks),
+  the official client-side package
 - [TypeScript SDK v2 migration notes for protocol revision 2026-07-28](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28)
 
 ## What survives what
@@ -255,25 +272,29 @@ output is also included below for text-only readers:
 It runs on every pull request, so it cannot quietly stop being true. The
 server also shows the simplest verified host workaround — see the next section.
 
-## Known gap in the official SDK
+## The official SDK's era gate
 
-On a `2026-07-28` server built with `@modelcontextprotocol/server` v2, **two of
-the extension's three methods cannot be served through the SDK's registered
-handlers.** `tasks/get` and `tasks/cancel` answer `-32601` before any handler
-runs — including
-`fallbackRequestHandler` — because both names belong to the retired
-`2025-11-25` method registry and the protocol-era gate fires on the way in.
-`tasks/update` works, because SEP-2663 introduced it and no era claims the name.
-
-This is measured, not inferred; the environment and findings are in the
+Before `@modelcontextprotocol/server` 2.3.0, a `2026-07-28` server **could not
+serve two of the extension's three methods through the SDK's registered
+handlers.** `tasks/get` and `tasks/cancel` answered `-32601` before any handler
+ran — including `fallbackRequestHandler` — because both names belong to the
+retired `2025-11-25` method registry and the protocol-era gate fired on the way
+in. `tasks/update` worked, because SEP-2663 introduced it and no era claims the
+name. That was measured with 2.0.0, not inferred; the environment and findings
+are in the
 [compatibility profile](docs/contract.md#typescript-sdk-v2-compatibility).
-The crash-recovery example uses the simplest verified host workaround: answer
-those two HTTP requests in middleware before `createMcpHandler`. Renaming the
-methods below `Protocol`, at the transport seam, is also verified. The SDK bug
-is tracked in
-[typescript-sdk#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598),
-with an
-[upstream fix under review](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599).
+
+The gate is fixed upstream
+([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599),
+closing [#2598](https://github.com/modelcontextprotocol/typescript-sdk/issues/2598)).
+From 2.3.0, a `tasks/get` or `tasks/cancel` handler registered with an explicit
+schema is served; typed registration and `fallbackRequestHandler` are still
+gated for those two names.
+
+The crash-recovery example still pins 2.0.0 and therefore keeps the simplest
+host workaround verified for that version: it answers those two HTTP requests
+in middleware before `createMcpHandler`. Moving it to 2.3.0 with explicit-schema
+handlers, and re-measuring the fix here, is a separate pending change.
 
 ## Writing your own store
 

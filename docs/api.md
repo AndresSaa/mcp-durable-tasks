@@ -217,10 +217,13 @@ status is `input_required` rather than assuming the write has landed.
 The durable record lives in the `TaskStore`, but the promise `requestInput()`
 returns and the `AbortSignal` belong to **the process running the worker**.
 While a worker is live, `tasks/update` and `tasks/cancel` have to reach that
-instance — sticky routing, or coordination you provide.
+instance. The extension specifies how: over Streamable HTTP, clients set the
+`Mcp-Name` header to the task ID on `tasks/get`, `tasks/update` and
+`tasks/cancel`, so your load balancer can route by it. That routing, or any
+other coordination between instances, is yours to configure.
 
-This is not an oversight and it is not a limitation the specification resolves
-either; see [process boundaries](contract.md#process-boundaries). Embedding a
+This is not an oversight; see
+[process boundaries](contract.md#process-boundaries). Embedding a
 broker would turn this state engine into the queue explicitly excluded by the
 [non-goals](contract.md#non-goals). After a crash there is no promise left to
 wake — there is durable state, which is the point.
