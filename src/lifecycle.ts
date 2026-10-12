@@ -24,10 +24,16 @@ import {
   type MutationDecision,
   type MutationOutcome,
 } from "./task-mutator.js";
-import { isTerminal, toCreateTaskResult, toDetailedTask } from "./wire.js";
+import {
+  assertKnownStatus,
+  isTerminal,
+  toCreateTaskResult,
+  toDetailedTask,
+} from "./wire.js";
 import {
   assertPollIntervalMs,
   assertStatusMessage,
+  assertSweepIntervalMs,
   assertTtlMs,
 } from "./validation.js";
 import { WorkerCoordinator } from "./worker-coordinator.js";
@@ -53,6 +59,7 @@ export class TaskLifecycle {
   #closed = false;
 
   constructor(options: TaskLifecycleOptions) {
+    assertSweepIntervalMs(options.sweepIntervalMs);
     this.#store = options.store;
     this.#defaultTtlMs =
       options.defaultTtlMs === undefined
@@ -237,8 +244,11 @@ export class TaskLifecycle {
     this.#assertOpen();
     const record = await this.#store.get(taskId);
     if (record === undefined) throw new TaskNotFoundError(taskId);
+    assertKnownStatus(record);
     if (!isTerminal(record.status)) {
-      this.#workers.abort(taskId, new TaskCancelled(taskId));
+      // The record bounds how long the raised signal is kept for a worker
+      // that has not read it yet: until the task ends or expires.
+      this.#workers.abort(taskId, new TaskCancelled(taskId), record);
     }
     return { resultType: "complete" };
   }

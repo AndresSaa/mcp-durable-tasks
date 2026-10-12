@@ -147,6 +147,24 @@
   tests que fijan el comportamiento actual: `$schema` no string en un schema
   de tool se acepta (el schema lo rechaza) y `execution.taskSupport`
   desconocido se rechaza (campo SDK 1.30.0 que `2026-07-28` no define).
+- ✅ **Tercera auditoría, hallazgos del motor (13 oct 2026).** Cada uno
+  reproducido con un test que fallaba antes de corregirlo. El contenido de
+  sampling se limita a `SamplingMessageContentBlock` (antes admitía
+  `resource_link`/`resource` fuera de un `tool_result`); `requestedSchema.$schema`
+  no string se rechaza; un `status` desconocido en un record es corrupción y
+  no admite escrituras; `sweepIntervalMs` y `compactEvery` se validan;
+  `compact()` saca del índice lo que su snapshot excluye (I8 con reloj que
+  retrocede); y `WorkerCoordinator` libera el `AbortController` de una
+  cancelación sin worker local al expirar la tarea. Decisiones que el plan no
+  preveía: `minLength`/`maxLength`/`minItems`/`maxItems` fraccionarios se
+  siguen aceptando (el TypeScript dice `number`, el JSON Schema `integer`;
+  se sigue el TypeScript y queda listado), y la expiración de estado local
+  pasa a un único timer por tarea en vez del timer propio del waiter. Solo
+  documentado, sin cambio de modelo: las respuestas de input no sobreviven a
+  un reinicio (un worker reiniciado necesita claves nuevas, y una respuesta
+  que completa la ronda antigua se confirma pero se pierde); persistirlas
+  queda pendiente de decisión del propietario. Los hallazgos del kit de
+  conformidad van en un cambio separado.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

@@ -42,6 +42,46 @@ either is a major version.
   the URL elicitation `elicitationId` is optional, `outputSchema` is a plain
   `JsonObject`, and `structuredContent` is a `JsonValue`. Code that reads
   `structuredContent` from a response as an object must now narrow it first.
+- **Breaking:** a sampling message's `content` in `requestInput()`, and the
+  `content` of the sampling result that answers it in `updateTask()`, are now
+  limited to the `2026-07-28` `SamplingMessageContentBlock` set: text, image,
+  audio, `tool_use` and `tool_result`. A `resource_link` or embedded
+  `resource` block there used to be accepted, which parked the task with a
+  request the schema rejects on every `tasks/get`, or resumed the worker with
+  a result the schema rejects; it now throws `TypeError` and nothing is
+  written. Both blocks remain valid inside a `tool_result`'s `content`. The
+  exported types already excluded them.
+- **Breaking:** the `sweepIntervalMs` option of `TaskLifecycle` and the
+  `compactEvery` option of `WalTaskStore` are now validated, and an invalid
+  value throws `TypeError` from the constructor. `sweepIntervalMs` must be
+  `null`, `undefined` or an integer from 1 to 2,147,483,647; Node used to run
+  0, a negative value, `NaN`, a non-number or a value above its timer limit
+  as a 1 ms sweep loop. `compactEvery` must be `null`, `undefined` or a safe
+  integer of at least 1, checked before the log is opened; `NaN` used to
+  disable automatic compaction silently, and 0 or a negative count compacted
+  after every mutation.
+- `WalTaskStore.compact()` now drops from memory the expired tasks its
+  snapshot leaves out. They used to stay indexed after the checkpoint had
+  removed them from replay, so a clock that stepped back after a compaction
+  made `get()` return a task that was gone after the next reopen.
+- `cancelTask()` on a task with no worker in this process no longer leaks an
+  `AbortController` for the life of the process. The raised signal is still
+  kept for a worker that reads it later, but is now released when the task's
+  TTL elapses, not only on a terminal transition through the same lifecycle
+  or on `close()`. The same expiry now also releases the signal of a worker
+  that read it and then stopped writing.
+- A stored record whose `status` is not one of the five task states is now
+  reported as corrupt, like a record with a missing or misplaced payload.
+  `getTask()` used to resolve `undefined` for it, and `complete()`,
+  `progress()`, `requestInput()` and the other writes were allowed because
+  such a status is not terminal. Every lifecycle method now throws the
+  "inconsistent" error and leaves the record unchanged; `cancelTask()` raises
+  no signal.
+- **Breaking:** a form elicitation whose `requestedSchema.$schema` is present
+  but not a string is now refused by `requestInput()` with `TypeError`. Both
+  the stable schema and its TypeScript source type it as a string; it used to
+  be accepted and stored, and every `tasks/get` for the task then failed
+  schema validation.
 
 ### Changed
 
@@ -103,6 +143,18 @@ either is a major version.
   and the main entry point still has no runtime dependencies.
 
 ### Known issues
+
+- Input responses do not survive a restart. If the process that owned a
+  worker dies while its task is `input_required`, a client reply that answers
+  every outstanding key before a new worker asks again is acknowledged with
+  `{ resultType: "complete" }` and moves the task to `working`, but the
+  responses are not stored and reach no worker. A restarted worker cannot
+  re-issue the old keys either (`DuplicateInputKeyError`, keys are unique for
+  the life of the task); it has to start a new round with new keys.
+  `docs/durability.md` used to say that a restarted server "can drive the
+  task again" without that qualification; it, `docs/api.md` and
+  `docs/contract.md` now state the limitation. Pinned as current behaviour,
+  not a guarantee, in `test/wal-store.test.ts`.
 
 Found by validating engine output against the stable `2026-07-28` schema.
 Each is pinned by a test in `test/schema-conformance.test.ts` and described in

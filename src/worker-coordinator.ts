@@ -1,7 +1,6 @@
 import { TaskNotFoundError } from "./errors.js";
 import type { InputResponses, TaskRecord } from "./types.js";
-
-const MAX_TIMEOUT_MS = 2_147_483_647;
+import { MAX_TIMER_MS } from "./validation.js";
 
 interface Waiter {
   token: symbol;
@@ -10,7 +9,11 @@ interface Waiter {
   reject: (error: unknown) => void;
   signal: AbortSignal;
   abortListener: () => void;
-  expiryTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface Expiry {
+  expiresAt: number;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export interface WaitRegistration {
@@ -25,14 +28,33 @@ export interface WaitRegistration {
  * Durable state remains in TaskStore. These promises and AbortSignals only
  * make sense in the process where the worker is running, and are deliberately
  * isolated from the public TaskLifecycle surface.
+ *
+ * Everything held per task is released when the task ends through this
+ * lifecycle, when it expires, or on `close()`. Expiry needs a timer because
+ * nothing else would tell this process: a task cancelled here whose worker
+ * never runs here (or ends elsewhere) gets no further committed write, and
+ * `sweep()` is a store operation the lifecycle does not observe. Without it,
+ * every such cancellation would keep its AbortController for the life of the
+ * process.
  */
 export class WorkerCoordinator {
   readonly #now: () => number;
   readonly #signals = new Map<string, AbortController>();
   readonly #waiters = new Map<string, Waiter>();
+  readonly #expiries = new Map<string, Expiry>();
 
   constructor(now: () => number) {
     this.#now = now;
+  }
+
+  /** How many tasks hold process-local state. Internal, for leak tests. */
+  get trackedTasks(): number {
+    const ids = new Set([
+      ...this.#signals.keys(),
+      ...this.#waiters.keys(),
+      ...this.#expiries.keys(),
+    ]);
+    return ids.size;
   }
 
   signalFor(taskId: string): AbortSignal {
@@ -89,10 +111,16 @@ export class WorkerCoordinator {
     const waiter = this.#take(taskId);
     if (waiter !== undefined) waiter.reject(error);
     this.#signals.delete(taskId);
+    this.#clearExpiry(taskId);
   }
 
-  abort(taskId: string, reason: unknown): void {
+  /**
+   * Records cancellation intent for `record`'s task. The signal stays raised
+   * for a worker that reads it later, until the task ends or expires.
+   */
+  abort(taskId: string, reason: unknown, record: TaskRecord): void {
     this.#controller(taskId).abort(reason);
+    this.#trackExpiry(record);
   }
 
   observe(record: TaskRecord): void {
@@ -110,45 +138,61 @@ export class WorkerCoordinator {
       return;
     }
 
-    if (record.status === "input_required") this.#armExpiry(record);
+    // A committed write may have revised the TTL. Only tasks that already
+    // hold local state are tracked; anything else has nothing to release.
+    if (this.#signals.has(record.taskId) || this.#waiters.has(record.taskId)) {
+      this.#trackExpiry(record);
+    }
   }
 
   close(error: unknown): void {
     const taskIds = [...this.#waiters.keys()];
     for (const taskId of taskIds) this.finish(taskId, error);
     this.#signals.clear();
+    for (const taskId of [...this.#expiries.keys()]) this.#clearExpiry(taskId);
   }
 
-  #armExpiry(record: TaskRecord): void {
-    const waiter = this.#waiters.get(record.taskId);
-    if (waiter === undefined) return;
-    if (waiter.expiryTimer !== undefined) clearTimeout(waiter.expiryTimer);
-    waiter.expiryTimer = undefined;
+  /**
+   * One timer per tracked task, at `createdAt + ttlMs` by the injected clock.
+   * If it fires before that clock agrees (a test clock, or one that stepped
+   * back), it re-arms instead of releasing a live task.
+   */
+  #trackExpiry(record: TaskRecord): void {
+    const { taskId } = record;
+    this.#clearExpiry(taskId);
     if (record.ttlMs === null) return;
-
     const createdAt = Date.parse(record.createdAt);
     if (Number.isNaN(createdAt)) return;
-    const expiresAt = createdAt + record.ttlMs;
+
+    const expiry: Expiry = { expiresAt: createdAt + record.ttlMs };
+    this.#expiries.set(taskId, expiry);
     const schedule = () => {
-      const current = this.#waiters.get(record.taskId);
-      if (current?.token !== waiter.token) return;
-      const remaining = expiresAt - this.#now();
+      if (this.#expiries.get(taskId) !== expiry) return;
+      const remaining = expiry.expiresAt - this.#now();
       if (remaining <= 0) {
-        this.#reject(
-          record.taskId,
-          waiter.token,
-          new TaskNotFoundError(record.taskId),
-        );
-        this.#signals.delete(record.taskId);
+        this.#expired(taskId);
         return;
       }
-      current.expiryTimer = setTimeout(
-        schedule,
-        Math.min(remaining, MAX_TIMEOUT_MS),
-      );
-      current.expiryTimer.unref?.();
+      expiry.timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
+      expiry.timer.unref?.();
     };
     schedule();
+  }
+
+  #expired(taskId: string): void {
+    const waiter = this.#waiters.get(taskId);
+    if (waiter !== undefined) {
+      this.#reject(taskId, waiter.token, new TaskNotFoundError(taskId));
+    }
+    this.#signals.delete(taskId);
+    this.#clearExpiry(taskId);
+  }
+
+  #clearExpiry(taskId: string): void {
+    const expiry = this.#expiries.get(taskId);
+    if (expiry === undefined) return;
+    if (expiry.timer !== undefined) clearTimeout(expiry.timer);
+    this.#expiries.delete(taskId);
   }
 
   #reject(taskId: string, token: symbol, error: unknown): void {
@@ -162,7 +206,6 @@ export class WorkerCoordinator {
     if (waiter === undefined) return undefined;
     this.#waiters.delete(taskId);
     waiter.signal.removeEventListener("abort", waiter.abortListener);
-    if (waiter.expiryTimer !== undefined) clearTimeout(waiter.expiryTimer);
     return waiter;
   }
 

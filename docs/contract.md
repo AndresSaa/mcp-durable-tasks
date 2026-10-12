@@ -114,6 +114,14 @@ may still complete or fail if work wins the race.
   non-finite or non-number value, or anything beyond
   `Number.MAX_SAFE_INTEGER`, and nothing is written. `ttlMs` must also be
   greater than 0; `pollIntervalMs` has no further bound, as in the schema.
+- A stored record that contradicts the state model is corrupt, and the engine
+  refuses it rather than projecting or repairing it: a status-specific payload
+  that is missing or present in the wrong state, or a `status` outside the
+  five above. `tasks/get` throws a "Stored task ... is inconsistent" error for
+  it, and so do `tasks/update`, `tasks/cancel` and every worker write when the
+  status is unknown. An unknown status is never treated as mutable, because it
+  is not terminal either; writing over it would turn a corrupt record into an
+  apparently valid task.
 - Records already in a store are not re-validated. A log written before that
   check existed may hold a fractional or out-of-range hint; it still opens,
   because replay checks only that each record is plain JSON, and expiry
@@ -175,14 +183,31 @@ the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
   object.
 
 Each of the three is a relaxation: everything accepted before is still
-accepted. With them aligned, the check and the snapshot agree except in these
-places:
+accepted. One rule went the other way, because the check was wider than the
+revision. A sampling message's `content`, and a `CreateMessageResult`'s
+`content`, are `SamplingMessageContentBlock`s: text, image, audio, `tool_use`
+or `tool_result`, alone or in an array. The engine used to admit resource
+links and embedded resources there too, because it reused the block set of a
+tool result's `content`, which is MCP's wider `ContentBlock`. Such a request
+parked the task and made every `tasks/get` non-conforming, and such a result
+resumed the worker. Both are now refused with `TypeError`; inside a
+`tool_result`, `content` still accepts the full `ContentBlock` set. Likewise,
+a form elicitation's `requestedSchema.$schema`, which both `schema.json` and
+`spec.types.ts` type as a string, is refused when present with any other
+type.
+
+With these aligned, the check and the snapshot agree except in these places:
 
 - The engine enforces what the schema states only as a `format` annotation or
   in prose: Base64 for binary content, a parseable URL for URL elicitation and
   `file://` for roots.
-- The engine accepts any finite number as an elicitation value, as
-  `spec.types.ts` declares; the generated `schema.json` narrows it to integer.
+- Where `spec.types.ts` declares `number` and the generated `schema.json`
+  narrows it to `integer`, the engine follows the TypeScript and accepts any
+  finite number: an elicitation response value, and a form elicitation's
+  `minLength`/`maxLength` (string fields) and `minItems`/`maxItems`
+  (multi-select fields). A fractional value in one of those limits therefore
+  reaches `tasks/get` and fails the generated schema; it does not fail the
+  TypeScript definition that upstream declares authoritative.
 - Found while aligning the three rules above and left for a decision, pinned
   in the same test file: the engine refuses a tool `execution.taskSupport`
   outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the
@@ -205,6 +230,16 @@ The round-trip rules are:
   release a waiter.
 - Completing, failing, cancelling, expiring or closing rejects any outstanding
   process-local waiter exactly once.
+- Responses are delivered, not retained. A round's answers are stored only
+  while the round is partial; the update that completes it clears them,
+  moves the task to `working` and hands them to the local waiter. With no
+  waiter, as after a restart, that update is still acknowledged and still
+  moves the task to `working`, and the answers are lost. Because keys are
+  lifetime-unique, a restarted worker cannot ask the same keys again; it must
+  start a new round with new keys. This is current behaviour, recorded as a
+  known limitation rather than a guarantee
+  ([durability](durability.md#what-durability-does-not-cover)); whether
+  acknowledged responses should be persisted is an open package decision.
 
 ## Store invariants
 
@@ -236,7 +271,10 @@ only enumerable own string-keyed patch properties. `undefined` deletes a field.
 CAS protects the durable record; it does not route process-local worker effects.
 
 `WalTaskStore` compaction rewrites a snapshot of all live records before
-checkpointing and compacting old entries. A terminal transition is not itself
+checkpointing and compacting old entries. Records already expired by its
+clock are left out of the snapshot and, once the checkpoint commits, dropped
+from the in-memory index too, so memory never holds a task the next open will
+not replay, even if the clock later steps back. A terminal transition is not itself
 a checkpoint: doing that would erase the terminal result on reopen. Automatic
 compaction runs after its triggering mutation is durable; its failure is
 observable without turning that committed mutation into a rejection.
@@ -252,6 +290,15 @@ promise returned by `requestInput()` belong to that worker process. While the
 worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance.
 After a crash, the application resumes from durable state; JavaScript
 continuations are not durable.
+
+That process-local state is bounded by the task's life. A lifecycle releases
+what it holds for a task (the raised signal of a cancellation whose worker is
+not, or not yet, running here, and any parked waiter) when the task reaches a
+terminal state through it, when the task's TTL elapses by its clock, or on
+`close()`. Expiry is tracked from the record it last read or committed, so a
+TTL revised by another instance is not seen; the worst case is that a signal
+raised here is dropped at the old expiry, before a worker that never read it
+starts.
 
 That affinity is the deployment model the extension itself defines. Its
 Streamable HTTP binding requires the client to set the `Mcp-Name` header to

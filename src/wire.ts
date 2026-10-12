@@ -64,7 +64,26 @@ function assertNoPayloads(
   }
 }
 
+const KNOWN: ReadonlySet<string> = new Set([
+  "working",
+  "input_required",
+  ...TERMINAL,
+]);
+
+/**
+ * A store can hand back any status it was given — `TaskStore.create()` and
+ * replay do not interpret it. A status outside the five is a corrupt record:
+ * it has no wire projection, and since it is not terminal either, letting the
+ * engine write over it would turn corruption into an apparently valid task.
+ */
+export function assertKnownStatus(record: TaskRecord): void {
+  if (!KNOWN.has(record.status)) {
+    corrupt(record, `unknown status ${JSON.stringify(record.status)}`);
+  }
+}
+
 function assertRecordShape(record: TaskRecord): void {
+  assertKnownStatus(record);
   switch (record.status) {
     case "working":
     case "cancelled":

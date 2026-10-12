@@ -39,14 +39,14 @@ const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 
 ### Options
 
-| Option                  | Type             | Default             | Meaning                                                                                                       |
-| ----------------------- | ---------------- | ------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `store`                 | `TaskStore`      | —                   | Required. Where task state lives.                                                                             |
-| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or a safe integer `> 0`.                               |
-| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it. Must be a safe integer.                                    |
-| `sweepIntervalMs`       | `number \| null` | `null`              | Automatic sweep period. The timer is `unref`'d.                                                               |
-| `now`                   | `() => number`   | `Date.now`          | Injectable clock. For tests; nothing else should pass it.                                                     |
-| `generateTaskId`        | `() => string`   | `crypto.randomUUID` | Must stay unguessable — see [Security](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md). |
+| Option                  | Type             | Default             | Meaning                                                                                                         |
+| ----------------------- | ---------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `store`                 | `TaskStore`      | —                   | Required. Where task state lives.                                                                               |
+| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or a safe integer `> 0`.                                 |
+| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it. Must be a safe integer.                                      |
+| `sweepIntervalMs`       | `number \| null` | `null`              | Automatic sweep period. `null` disables it. Must be an integer from 1 to 2,147,483,647. The timer is `unref`'d. |
+| `now`                   | `() => number`   | `Date.now`          | Injectable clock. For tests; nothing else should pass it.                                                       |
+| `generateTaskId`        | `() => string`   | `crypto.randomUUID` | Must stay unguessable — see [Security](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md).   |
 
 ### Methods
 
@@ -58,6 +58,12 @@ const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 | `updateTask(taskId, inputResponses)` | `tasks/update` | Applies outstanding input responses. Complete acknowledgement |
 | `cancelTask(taskId)`                 | `tasks/cancel` | Raises the worker's signal. Complete acknowledgement          |
 | `close()`                            | —              | Stops the sweeper, wakes parked workers, closes the store     |
+
+The constructor throws `TypeError`, before it starts any timer, for a
+`sweepIntervalMs` that is not `null`, `undefined` or an integer from 1 to
+2,147,483,647 (the longest delay a JavaScript timer honours). Node would
+silently run 0, a negative value, `NaN` or anything above that limit as a
+1 ms loop.
 
 #### `createTask(init?)`
 
@@ -141,6 +147,13 @@ other than `cancelled` if the work finished first.
 
 A worker that honours the signal calls `handle.cancelled()`. One that ignores
 it leaves the task to its TTL. Cancelling an already-terminal task is a no-op.
+
+The raised signal is process-local state. A worker in this process that reads
+`handle.signal` after the cancel still finds it raised, for as long as the
+task lives: the lifecycle keeps it until the task ends through this lifecycle,
+until its TTL elapses (by the lifecycle's clock, following any TTL revised
+through this lifecycle), or until `close()`. A task with `ttlMs: null` that
+never ends here keeps it until `close()`.
 The acknowledgement is `{ resultType: "complete" }` in both cases.
 
 #### `close()`
@@ -224,7 +237,10 @@ const answers = await task.requestInput({
   elicitation. Following `2026-07-28`, URL elicitation does not need an
   `elicitationId` (one that is present is kept), a tool `outputSchema` may be
   any JSON Schema object, and a tool result's `structuredContent` may be any
-  JSON value. The remaining differences from the schema are listed in the
+  JSON value. A sampling message, and the sampling result that answers it,
+  carry only text, image, audio, `tool_use` and `tool_result` blocks; resource
+  links and embedded resources are accepted only inside a `tool_result`'s
+  `content`. The remaining differences from the schema are listed in the
   [contract](contract.md#input-rounds).
 - **Keys are unique for the whole lifetime of the task**, including after it is
   terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
@@ -252,6 +268,15 @@ This is not an oversight; see
 broker would turn this state engine into the queue explicitly excluded by the
 [non-goals](contract.md#non-goals). After a crash there is no promise left to
 wake — there is durable state, which is the point.
+
+That durable state does not include the answers to a round. If a task was
+`input_required` when its process died, a restarted worker must ask with
+**new** keys: re-issuing a key the dead process used throws
+`DuplicateInputKeyError`. And a client reply that answers every outstanding
+key before any worker in the new process asks is acknowledged with
+`{ resultType: "complete" }` and moves the task to `working`, but the
+responses are not stored and reach no worker. See
+[durability.md](durability.md#what-durability-does-not-cover).
 
 ---
 
@@ -334,14 +359,18 @@ Durable across process restarts, on top of
 serves reads; every mutation is appended to a write-ahead log first, and the
 log replays into the index on open.
 
-| Option              | Type              | Default    | Meaning                                                         |
-| ------------------- | ----------------- | ---------- | --------------------------------------------------------------- |
-| `dir`               | `string`          | —          | Required. Holds `wal.jsonl` and `wal.checkpoint`                |
-| `fsync`             | `boolean`         | `false`    | `true` moves the boundary from the page cache to storage        |
-| `maxEntryBytes`     | `number`          | 8 MiB      | Largest encoded task record the log accepts                     |
-| `compactEvery`      | `number \| null`  | `1_000`    | Superseded entries before an automatic rewrite. `null` disables |
-| `now`               | `() => number`    | `Date.now` | Injectable clock, for TTL                                       |
-| `onCompactionError` | `(event) => void` | —          | Observes a failed automatic compaction                          |
+| Option              | Type              | Default    | Meaning                                                                                          |
+| ------------------- | ----------------- | ---------- | ------------------------------------------------------------------------------------------------ |
+| `dir`               | `string`          | —          | Required. Holds `wal.jsonl` and `wal.checkpoint`                                                 |
+| `fsync`             | `boolean`         | `false`    | `true` moves the boundary from the page cache to storage                                         |
+| `maxEntryBytes`     | `number`          | 8 MiB      | Largest encoded task record the log accepts                                                      |
+| `compactEvery`      | `number \| null`  | `1_000`    | Superseded entries before an automatic rewrite. `null` disables; otherwise a safe integer `>= 1` |
+| `now`               | `() => number`    | `Date.now` | Injectable clock, for TTL                                                                        |
+| `onCompactionError` | `(event) => void` | —          | Observes a failed automatic compaction                                                           |
+
+A `compactEvery` that is not `null`, `undefined` or a safe integer of at least
+1 throws `TypeError` before the log is opened. `NaN` used to disable
+compaction silently, and 0 or a negative count compacted after every mutation.
 
 **One process, one directory.** `process-wal` is single-writer and does not
 lock; two processes on the same directory corrupt the log. See

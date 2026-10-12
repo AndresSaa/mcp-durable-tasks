@@ -287,6 +287,63 @@ describe("the wire projection", () => {
     await expect(engine.getTask("corrupt")).rejects.toThrow(/inconsistent/i);
     await engine.close();
   });
+
+  describe("a stored record whose status is not one of the five", () => {
+    async function withUnknownStatus() {
+      const store = new MemoryTaskStore();
+      await store.create({
+        taskId: "odd",
+        status: "submitted",
+        createdAt: "2026-08-09T12:00:00.000Z",
+        lastUpdatedAt: "2026-08-09T12:00:00.000Z",
+        ttlMs: null,
+        version: 0,
+      } as unknown as TaskRecord);
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      return { store, engine };
+    }
+
+    it("is reported as corrupt by getTask instead of resolving undefined", async () => {
+      const { engine } = await withUnknownStatus();
+      await expect(engine.getTask("odd")).rejects.toThrow(
+        /inconsistent.*unknown status "submitted"/i,
+      );
+      await engine.close();
+    });
+
+    it.each([
+      ["complete", (h: ReturnType<TaskLifecycle["handle"]>) => h.complete({})],
+      ["progress", (h: ReturnType<TaskLifecycle["handle"]>) => h.progress("x")],
+      [
+        "requestInput",
+        (h: ReturnType<TaskLifecycle["handle"]>) =>
+          h.requestInput({ a: ROOTS }),
+      ],
+      ["cancelled", (h: ReturnType<TaskLifecycle["handle"]>) => h.cancelled()],
+    ])("cannot be mutated by %s", async (_name, write) => {
+      const { store, engine } = await withUnknownStatus();
+      await expect(write(engine.handle("odd"))).rejects.toThrow(
+        /inconsistent/i,
+      );
+      expect(await store.get("odd")).toMatchObject({
+        status: "submitted",
+        version: 0,
+      });
+      await engine.close();
+    });
+
+    it("is refused by updateTask and cancelTask, raising no signal", async () => {
+      const { store, engine } = await withUnknownStatus();
+      const handle = engine.handle("odd");
+      await expect(engine.updateTask("odd", { a: {} })).rejects.toThrow(
+        /inconsistent/i,
+      );
+      await expect(engine.cancelTask("odd")).rejects.toThrow(/inconsistent/i);
+      expect(handle.signal.aborted).toBe(false);
+      expect(await store.get("odd")).toMatchObject({ version: 0 });
+      await engine.close();
+    });
+  });
 });
 
 describe("the public lifecycle surface", () => {
@@ -920,6 +977,48 @@ describe("cancellation", () => {
     await expect(parked).rejects.toBeInstanceOf(TaskCancelled);
   });
 
+  it("does not keep a signal for a task with no local worker past its expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, store, time } = build();
+      const ids: string[] = [];
+      for (let index = 0; index < 50; index += 1) {
+        const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+        await engine.cancelTask(taskId);
+        ids.push(taskId);
+      }
+
+      time.advance(1_000);
+      vi.advanceTimersByTime(1_000);
+      await store.sweep(time.now());
+
+      // The aborted controller that cancelTask created is gone: a handle for
+      // the same id now reads a fresh, unraised signal.
+      for (const taskId of ids) {
+        expect(engine.handle(taskId).signal.aborted).toBe(false);
+      }
+      await engine.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still raises the signal for a worker that reads it after the cancel", async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, time } = build();
+      const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+      await engine.cancelTask(taskId);
+
+      time.advance(999);
+      vi.advanceTimersByTime(999);
+      expect(engine.handle(taskId).signal.aborted).toBe(true);
+      await engine.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is a no-op on an already terminal task", async () => {
     const { engine } = build();
     const { taskId } = await engine.createTask();
@@ -1359,5 +1458,41 @@ describe("the sweeper timer", () => {
     expect(timers).toBeGreaterThan(0);
     await engine.close();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  // Node coerces each of these to a 1 ms interval (with a warning for NaN
+  // and for values beyond its 32-bit timer limit), which turns housekeeping
+  // into a busy sweep loop.
+  it.each([
+    ["zero", 0],
+    ["a negative period", -5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a fraction", 1.5],
+    ["a numeric string", "50"],
+    ["a period beyond the timer limit", 2 ** 31],
+  ])("refuses %s as sweepIntervalMs and starts no timer", (_name, value) => {
+    expect(
+      () =>
+        new TaskLifecycle({
+          store: new MemoryTaskStore(),
+          sweepIntervalMs: value as number,
+        }),
+    ).toThrow(TypeError);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["1 ms", 1],
+    ["the timer limit", 2 ** 31 - 1],
+  ])("accepts %s as sweepIntervalMs", async (_name, value) => {
+    const engine = new TaskLifecycle({
+      store: new MemoryTaskStore(),
+      sweepIntervalMs: value,
+    });
+    expect(vi.getTimerCount()).toBe(value == null ? 0 : 1);
+    await engine.close();
   });
 });
