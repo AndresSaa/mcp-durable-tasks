@@ -230,6 +230,16 @@ The round-trip rules are:
   release a waiter.
 - Completing, failing, cancelling, expiring or closing rejects any outstanding
   process-local waiter exactly once.
+- Responses are delivered, not retained. A round's answers are stored only
+  while the round is partial; the update that completes it clears them,
+  moves the task to `working` and hands them to the local waiter. With no
+  waiter, as after a restart, that update is still acknowledged and still
+  moves the task to `working`, and the answers are lost. Because keys are
+  lifetime-unique, a restarted worker cannot ask the same keys again; it must
+  start a new round with new keys. This is current behaviour, recorded as a
+  known limitation rather than a guarantee
+  ([durability](durability.md#what-durability-does-not-cover)); whether
+  acknowledged responses should be persisted is an open package decision.
 
 ## Store invariants
 

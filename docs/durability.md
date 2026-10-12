@@ -180,9 +180,32 @@ long tasks live: builds, test suites, migrations, indexing.
 **Worker coordination is not durable, and cannot be.** The promise
 `requestInput()` returns and the `AbortSignal` a worker watches live in that
 worker's process. After a crash there is no promise to wake — there is the
-task's durable status, which is the point. A restarted server reads
-`input_required` from the store and can drive the task again; what it cannot do
+task's durable status, which is the point. What a restarted server cannot do
 is resume the suspended function call that was running before.
+
+**Input responses are not durable on their own.** The store keeps the
+outstanding requests, any partial responses and the lifetime key ledger, but
+a response is only ever delivered to a waiting worker; the record does not
+keep a completed round's answers. After a restart that has consequences a
+restarted server has to plan for:
+
+- The task is still `input_required`, and clients still see its requests on
+  `tasks/get`. If a client answers every outstanding key before a worker in
+  the new process asks again, `tasks/update` acknowledges the reply
+  (`resultType: "complete"`), the task moves to `working`, and **the answers
+  are discarded**: no worker was waiting, and the stored record keeps the
+  keys in `usedInputKeys` but no responses.
+- A restarted worker cannot re-issue the old keys. Keys are unique for the
+  life of the task (I5), so `requestInput()` with a key the dead process
+  already used throws `DuplicateInputKeyError`, whether or not the client
+  answered it. A restarted worker drives the task again only by asking with
+  **new** keys, which starts a new round the client has to answer.
+
+So a restarted server can resume a task that was waiting for input, but it
+cannot recover input that was outstanding or answered across the restart.
+`test/wal-store.test.ts` pins this current behaviour, and it is recorded as a
+known limitation; persisting acknowledged responses is being evaluated
+separately and is not a guarantee in either direction.
 
 While a worker _is_ live, `tasks/update` and `tasks/cancel` have to reach its
 instance. See [api.md](api.md#worker-process-affinity) and

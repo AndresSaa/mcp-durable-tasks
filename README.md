@@ -244,6 +244,11 @@ progress version is a hard lower bound after a kill in later appends; and a
 confirmed multi-task snapshot survives a kill in a compaction loop. Those tests
 load `dist/`, so what is proven to recover is the package you install.
 
+What does not survive is the input round itself. A restarted worker has to ask
+again with new keys, and a client reply that completes the old round before it
+does is acknowledged but not stored, so it reaches no worker
+([durability](docs/durability.md#what-durability-does-not-cover)).
+
 The deterministic examples are backed by a fast-check state-machine model:
 random schedules combine progress, TTL changes and clock rollback, partial and
 duplicate input responses, cancellation, terminal races and injected CAS

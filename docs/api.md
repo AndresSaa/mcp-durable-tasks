@@ -269,6 +269,15 @@ broker would turn this state engine into the queue explicitly excluded by the
 [non-goals](contract.md#non-goals). After a crash there is no promise left to
 wake — there is durable state, which is the point.
 
+That durable state does not include the answers to a round. If a task was
+`input_required` when its process died, a restarted worker must ask with
+**new** keys: re-issuing a key the dead process used throws
+`DuplicateInputKeyError`. And a client reply that answers every outstanding
+key before any worker in the new process asks is acknowledged with
+`{ resultType: "complete" }` and moves the task to `working`, but the
+responses are not stored and reach no worker. See
+[durability.md](durability.md#what-durability-does-not-cover).
+
 ---
 
 ## `TaskStore`

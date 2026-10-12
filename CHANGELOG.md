@@ -128,6 +128,18 @@ either is a major version.
 
 ### Known issues
 
+- Input responses do not survive a restart. If the process that owned a
+  worker dies while its task is `input_required`, a client reply that answers
+  every outstanding key before a new worker asks again is acknowledged with
+  `{ resultType: "complete" }` and moves the task to `working`, but the
+  responses are not stored and reach no worker. A restarted worker cannot
+  re-issue the old keys either (`DuplicateInputKeyError`, keys are unique for
+  the life of the task); it has to start a new round with new keys.
+  `docs/durability.md` used to say that a restarted server "can drive the
+  task again" without that qualification; it, `docs/api.md` and
+  `docs/contract.md` now state the limitation. Pinned as current behaviour,
+  not a guarantee, in `test/wal-store.test.ts`.
+
 Found by validating engine output against the stable `2026-07-28` schema.
 Each is pinned by a test in `test/schema-conformance.test.ts` and described in
 `docs/contract.md`.

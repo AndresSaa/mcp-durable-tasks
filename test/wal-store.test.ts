@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ConcurrentUpdateError,
+  DuplicateInputKeyError,
   isTaskEntryTooLargeError,
   TaskEntryTooLargeError,
   TaskLifecycle,
@@ -537,6 +538,56 @@ describe("the engine on top of it", () => {
       status: "completed",
       result: { output: "done" },
     });
+    await second.close();
+  });
+
+  // This pins what happens today so a change to it is deliberate and visible.
+  // It is NOT a guarantee: docs/durability.md records it as a known
+  // limitation, and persisting acknowledged responses is under evaluation.
+  // If that changes, rewrite this test rather than preserving its outcome.
+  it("CURRENT BEHAVIOUR, NOT A GUARANTEE: a reply acknowledged after a restart is not retained, and its key stays spent", async () => {
+    const dir = freshDir();
+    const first = new TaskLifecycle({
+      store: open(dir),
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await first.createTask({ ttlMs: null });
+    const parked = first
+      .handle(taskId)
+      .requestInput({ k: { method: "roots/list" } });
+    void parked.catch(() => undefined);
+    for (let i = 0; i < 100; i += 1) {
+      if ((await first.getTask(taskId)).status === "input_required") break;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await first.close(); // the process that owned the worker is gone
+
+    const store = open(dir);
+    const second = new TaskLifecycle({ store, sweepIntervalMs: null });
+    expect(await second.getTask(taskId)).toMatchObject({
+      status: "input_required",
+    });
+
+    // The client's reply completes the round and is acknowledged...
+    await expect(
+      second.updateTask(taskId, { k: { roots: [] } }),
+    ).resolves.toEqual({ resultType: "complete" });
+
+    // ...but no worker was waiting for it, and it is not stored.
+    const stored = await store.get(taskId);
+    expect(stored).toMatchObject({ status: "working", usedInputKeys: ["k"] });
+    expect(stored).not.toHaveProperty("inputResponses");
+    expect(stored).not.toHaveProperty("inputRequests");
+
+    // A restarted worker cannot ask again with the same key (I5); it has to
+    // issue a new one.
+    await expect(
+      second.handle(taskId).requestInput({ k: { method: "roots/list" } }),
+    ).rejects.toBeInstanceOf(DuplicateInputKeyError);
+    const again = second
+      .handle(taskId)
+      .requestInput({ "k-2": { method: "roots/list" } });
+    void again.catch(() => undefined);
     await second.close();
   });
 
