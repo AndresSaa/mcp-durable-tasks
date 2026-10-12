@@ -1146,6 +1146,72 @@ describe("integer milliseconds", () => {
   });
 });
 
+describe("statusMessage is a string at runtime", () => {
+  // Unreachable from typed TypeScript, reachable from JavaScript. Every path
+  // that writes a statusMessage refuses a non-string before the store sees it.
+  const NOT_STRINGS: [string, unknown][] = [
+    ["a number", 42],
+    ["null", null],
+    ["an object", { text: "x" }],
+    ["an array", ["x"]],
+  ];
+
+  it.each(NOT_STRINGS)(
+    "progress() refuses %s without changing the task",
+    async (_name, value) => {
+      const { engine } = build();
+      const { taskId } = await engine.createTask({ statusMessage: "queued" });
+      const before = await engine.getTask(taskId);
+      await expect(
+        engine.handle(taskId).progress(value as string),
+      ).rejects.toThrow(/progress\(\) statusMessage must be a string/);
+      await expect(engine.getTask(taskId)).resolves.toEqual(before);
+    },
+  );
+
+  it.each(NOT_STRINGS)(
+    "createTask() refuses %s and stores nothing",
+    async (_name, value) => {
+      const store = new MemoryTaskStore();
+      const create = vi.spyOn(store, "create");
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      await expect(
+        engine.createTask({ statusMessage: value as string }),
+      ).rejects.toThrow(/createTask\(\) statusMessage must be a string/);
+      expect(create).not.toHaveBeenCalled();
+      await engine.close();
+    },
+  );
+
+  it.each(NOT_STRINGS)(
+    "cancelled() refuses %s and the task stays non-terminal",
+    async (_name, value) => {
+      const { engine } = build();
+      const { taskId } = await engine.createTask();
+      await expect(
+        engine.handle(taskId).cancelled(value as string),
+      ).rejects.toThrow(/cancelled\(\) statusMessage must be a string/);
+      await expect(engine.getTask(taskId)).resolves.toMatchObject({
+        status: "working",
+      });
+    },
+  );
+
+  it("still accepts an empty string, and cancelled() without one", async () => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask({ statusMessage: "" });
+    await engine.handle(taskId).progress("");
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      statusMessage: "",
+    });
+    await engine.handle(taskId).cancelled();
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      status: "cancelled",
+      statusMessage: "",
+    });
+  });
+});
+
 describe("compare-and-swap", () => {
   it("retries a lost race and eventually lands the write", async () => {
     const inner = new MemoryTaskStore();

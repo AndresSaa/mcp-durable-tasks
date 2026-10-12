@@ -185,6 +185,9 @@ only checks that `error` is a JSON object today, so any other object reaches
 ² Both hints follow the same rules as in `createTask()`: whole milliseconds in
 the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value
 throws `TypeError` and the whole call, message included, is not applied.
+`statusMessage` must be a string here, in `cancelled()` and in `createTask()`;
+TypeScript enforces that, and the engine checks it again at runtime for
+JavaScript callers, throwing `TypeError` without writing.
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised

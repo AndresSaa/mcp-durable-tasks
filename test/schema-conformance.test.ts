@@ -864,13 +864,12 @@ describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {
   );
 });
 
-describe("KNOWN DEFECT: progress() does not check statusMessage at runtime", () => {
+describe("fixed: progress() checks statusMessage at runtime", () => {
   // Unreachable from typed TypeScript; reachable from JavaScript.
-  it.fails("progress() with a non-string statusMessage", () =>
+  it("progress() with a non-string statusMessage", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress(42 as unknown as string)),
-    ),
-  );
+    ));
 });
 
 describe("KNOWN DEFECT: input validation refuses 2026-07-28 shapes", () => {

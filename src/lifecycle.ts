@@ -25,7 +25,11 @@ import {
   type MutationOutcome,
 } from "./task-mutator.js";
 import { isTerminal, toCreateTaskResult, toDetailedTask } from "./wire.js";
-import { assertPollIntervalMs, assertTtlMs } from "./validation.js";
+import {
+  assertPollIntervalMs,
+  assertStatusMessage,
+  assertTtlMs,
+} from "./validation.js";
 import { WorkerCoordinator } from "./worker-coordinator.js";
 
 const DEFAULT_TTL_MS = 3_600_000;
@@ -108,6 +112,9 @@ export class TaskLifecycle {
     assertTtlMs(ttlMs, "createTask() ttlMs");
     if (pollIntervalMs !== undefined) {
       assertPollIntervalMs(pollIntervalMs, "createTask() pollIntervalMs");
+    }
+    if (init?.statusMessage !== undefined) {
+      assertStatusMessage(init.statusMessage, "createTask() statusMessage");
     }
 
     const record: TaskRecord = {

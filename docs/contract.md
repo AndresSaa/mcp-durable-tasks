@@ -122,12 +122,13 @@ may still complete or fail if work wins the race.
   `progress()`. Normalising it on read was rejected: it would make the wire
   disagree with the record that expiry is computed from, and replay never
   writes.
+- `statusMessage` must be a string. TypeScript already requires it; at
+  runtime, for untyped JavaScript callers, `createTask()`, `progress()` and
+  `cancelled()` throw `TypeError` for anything else, and nothing is written.
 - The stable schema types `error` as a JSON-RPC error object (`code` integer,
-  `message` string). The engine does not enforce that, or (from untyped
-  JavaScript) that `statusMessage` is a string, so `fail()` with an arbitrary
-  object or a non-string `statusMessage` produces a `tasks/get` result the
-  schema rejects. Recorded as known defects with expected-fail tests; not
-  fixed yet.
+  `message` string). The engine does not enforce that, so `fail()` with an
+  arbitrary object produces a `tasks/get` result the schema rejects. Recorded
+  as a known defect with expected-fail tests; not fixed yet.
 - `createdAt` and `lastUpdatedAt` are ISO 8601 timestamps.
   `lastUpdatedAt >= createdAt` and never moves backwards, even if the injected
   clock does.

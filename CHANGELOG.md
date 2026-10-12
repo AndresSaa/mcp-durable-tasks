@@ -21,6 +21,10 @@ either is a major version.
   task failed schema validation. A WAL written before this change still opens
   unchanged; a stored non-integer hint is served as is until the worker
   revises it with `progress()`.
+- `progress()`, `cancelled()` and `createTask()` now check at runtime that a
+  `statusMessage` is a string and throw `TypeError` otherwise. Only untyped
+  JavaScript could pass anything else; it used to be stored and emitted on
+  `tasks/get`, which the schema rejects.
 
 ### Changed
 
@@ -81,7 +85,6 @@ Each remaining one is pinned by an expected-fail test and described in
 
 - `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
   with an integer `code` and a string `message`.
-- `progress()` does not check at runtime that `statusMessage` is a string.
 - Input validation follows `@modelcontextprotocol/sdk@1.30.0` and refuses
   three shapes the `2026-07-28` definitions accept: URL elicitation without
   `elicitationId`, a sampling tool whose `outputSchema` is not rooted at
