@@ -151,23 +151,45 @@ responses use the matching MCP result shapes.
 The stable `2026-07-28` `schema.json` defines both unions concretely:
 `InputRequest` references `CreateMessageRequest`, `ListRootsRequest` and
 `ElicitRequest`, and `InputResponse` their three results (A8). Runtime
-validation predates that snapshot and still follows the source types from
+validation predates that snapshot. It was written from the source types of
 [`@modelcontextprotocol/sdk@1.30.0`](https://github.com/modelcontextprotocol/typescript-sdk/blob/1.30.0/src/types.ts),
 including nested content blocks, Base64 binary content, `file://` roots,
-primitive elicitation schemas and URL elicitation fields. Checked against the
-snapshot's definitions, the two agree except in these places:
+primitive elicitation schemas and URL elicitation fields, and is checked
+against the snapshot's definitions in `test/schema-conformance.test.ts`.
+
+The engine keeps its own structural check rather than trusting the host or
+SDK to have validated the payload. `inputRequests` is stored and replayed to
+every client that polls, and an accepted response resumes the worker, so an
+invalid shape would become an unfulfillable task or a malformed worker input
+that outlives the request that carried it; and the main entry point cannot
+depend on an SDK to delegate to. What the check must not do is refuse a shape
+the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
+`2026-07-28` base types (`spec.types.ts`) instead:
+
+- URL elicitation needs only `message`, `mode: "url"` and a URL. The
+  `2026-07-28` shape has no `elicitationId`; a request that still carries the
+  `2025-11-25` field is accepted and stored unchanged.
+- A sampling tool's `outputSchema` may be any JSON Schema object. Only
+  `inputSchema` must be rooted at `type: "object"`, as before.
+- A tool result's `structuredContent` may be any JSON value, not only an
+  object.
+
+Each of the three is a relaxation: everything accepted before is still
+accepted. With them aligned, the check and the snapshot agree except in these
+places:
 
 - The engine enforces what the schema states only as a `format` annotation or
   in prose: Base64 for binary content, a parseable URL for URL elicitation and
   `file://` for roots.
 - The engine accepts any finite number as an elicitation value, as
   `spec.types.ts` declares; the generated `schema.json` narrows it to integer.
-- The engine **refuses three shapes the snapshot accepts**: URL elicitation
-  without an `elicitationId` (the `2026-07-28` base types have no such field),
-  a sampling tool whose `outputSchema` is not rooted at `type: "object"`, and
-  a tool result whose `structuredContent` is not an object. These are recorded
-  as known defects with expected-fail tests in
-  `test/schema-conformance.test.ts` and are not fixed yet.
+- Found while aligning the three rules above and left for a decision, pinned
+  in the same test file: the engine refuses a tool `execution.taskSupport`
+  outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the
+  `2026-07-28` `Tool` does not define and the open schema therefore accepts;
+  and it accepts a non-string `$schema` inside a tool's `inputSchema` or
+  `outputSchema`, which the schema rejects. The second one lets a
+  non-conforming request reach `tasks/get`.
 
 The round-trip rules are:
 
@@ -375,7 +397,7 @@ features to invent locally:
 | A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | A6  | Settled  | Settled upstream in the SDK, not by a host rewrite: since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), `tasks/get` and `tasks/cancel` handlers registered with an explicit schema bypass the era gate. Measured here on server 2.3.1 with the required `Mcp-Name` header: explicit-schema handlers serve all three methods; typed registration and `fallbackRequestHandler` still answer `-32601` for get and cancel. See [the compatibility profile](#typescript-sdk-v2-compatibility).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. The answer fixes the semantics of the planned `0.3.0` change emitter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| A8  | Settled  | Settled upstream: [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) was closed as completed, and the stable `2026-07-28` `schema.json`, now the vendored fixture, defines `InputRequest`/`InputResponse` as unions of the concrete sampling, roots and elicitation definitions and requires `resultType` on results. Checking the engine's runtime input validation against those definitions found three shapes the engine wrongly refuses; they are package defects, not open protocol questions ([input rounds](#input-rounds)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| A8  | Settled  | Settled upstream: [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) was closed as completed, and the stable `2026-07-28` `schema.json`, now the vendored fixture, defines `InputRequest`/`InputResponse` as unions of the concrete sampling, roots and elicitation definitions and requires `resultType` on results. Checking the engine's runtime input validation against those definitions found three shapes the engine wrongly refused; they were package defects, not open protocol questions, and are fixed ([input rounds](#input-rounds)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | A9  | Settled  | The extension defines the delivery mechanism: over Streamable HTTP the client sets `Mcp-Name` to `params.taskId` on `tasks/get`, `tasks/update` and `tasks/cancel`, so intermediaries can route every request for a task to the instance holding its state. Routing on it is host infrastructure; see [process boundaries](#process-boundaries).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? Re-measured on server and client 2.3.1: the server still stamps `"complete"` on any result without `resultType`, `tools/call` included, so a task handle that omits its discriminator reaches the client as an empty success; the client still rejects an explicit `"task"` from `tools/call`. The client alone no longer bridges an absent discriminator on `2026-07-28`; it rejects the result as invalid. The stable `2026-07-28` schema requires `resultType` and accepts it on `tasks/get`; only the pre-stable `draft` schema, vendored here until the re-pin, rejected it ([details](#generated-schema-and-the-result-discriminator)). [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637) was closed as a duplicate of the SDK's open Tasks-extension tracking issue ([#2189](https://github.com/modelcontextprotocol/typescript-sdk/issues/2189)). |
 

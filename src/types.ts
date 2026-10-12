@@ -4,9 +4,10 @@
  * how two internal modules talk to each other belong with the module that owns
  * them, so this file keeps answering "what does a consumer get?" on its own.
  *
- * Field-level shapes follow `test/fixtures/ext-tasks/schema.ts`, which is
- * upstream's declared source of truth. Where this file is narrower than the
- * generated `schema.json`, that is deliberate — see `docs/contract.md#input-rounds`.
+ * Field-level shapes follow `test/fixtures/ext-tasks/schema.ts` and the MCP
+ * base types it imports (`spec.types.ts`), which upstream declares the source
+ * of truth. Where this file differs from the generated `schema.json`, see
+ * `docs/contract.md#input-rounds`.
  */
 
 /** @see docs/contract.md#state-model */
@@ -101,7 +102,8 @@ interface ToolResultContent {
   type: "tool_result";
   toolUseId: string;
   content: readonly ToolResultContentBlock[];
-  structuredContent?: JsonObject;
+  /** Any JSON value in 2026-07-28, not only an object. */
+  structuredContent?: JsonValue;
   isError?: boolean;
   _meta?: JsonObject;
 }
@@ -124,7 +126,8 @@ interface SamplingTool {
   title?: string;
   description?: string;
   inputSchema: JsonObject & { type: "object" };
-  outputSchema?: JsonObject & { type: "object" };
+  /** Any JSON Schema object; 2026-07-28 does not require an `object` root. */
+  outputSchema?: JsonObject;
   annotations?: {
     title?: string;
     readOnlyHint?: boolean;
@@ -221,8 +224,13 @@ interface ElicitationInputRequest {
     | {
         mode: "url";
         message: string;
-        elicitationId: string;
         url: string;
+        /**
+         * Not part of 2026-07-28 URL elicitation. Kept optional so code
+         * written against the 2025-11-25 shape still compiles; never
+         * required, and carried unchanged when present.
+         */
+        elicitationId?: string;
       };
 }
 
@@ -276,10 +284,11 @@ export interface JsonObject {
 /**
  * What a {@linkcode TaskStore} persists.
  *
- * **This is not the wire shape.** Every task variant in the extension's schema
- * sets `additionalProperties: false`, so `version`, `inputResponses` and
- * `usedInputKeys` — all of which a correct store must keep — would make a
- * `tasks/get` response non-conforming. The projection to the wire is one
+ * **This is not the wire shape.** `version`, `inputResponses` and
+ * `usedInputKeys` — all of which a correct store must keep — are internal and
+ * must never reach a client. The stable schema is open (it sets no
+ * `additionalProperties: false`) and would not reject them, so keeping them
+ * off the wire is this package's own guarantee: the projection is one
  * function (`toDetailedTask`) and it is allow-list based for that reason.
  */
 export interface TaskRecord {

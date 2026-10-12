@@ -25,6 +25,15 @@ either is a major version.
   `statusMessage` is a string and throw `TypeError` otherwise. Only untyped
   JavaScript could pass anything else; it used to be stored and emitted on
   `tasks/get`, which the schema rejects.
+- **Behaviour change:** input validation now accepts three shapes the stable
+  `2026-07-28` MCP base types define and the SDK 1.30.0 rules it was written
+  from refused: URL elicitation without an `elicitationId`, a sampling tool
+  whose `outputSchema` is not rooted at `type: "object"`, and a tool result
+  whose `structuredContent` is any JSON value rather than an object. Each is a
+  relaxation; nothing accepted before is refused now. In the exported types,
+  the URL elicitation `elicitationId` is optional, `outputSchema` is a plain
+  `JsonObject`, and `structuredContent` is a `JsonValue`. Code that reads
+  `structuredContent` from a response as an object must now narrow it first.
 
 ### Changed
 
@@ -80,15 +89,17 @@ either is a major version.
 ### Known issues
 
 Found by validating engine output against the stable `2026-07-28` schema.
-Each remaining one is pinned by an expected-fail test and described in
+Each is pinned by a test in `test/schema-conformance.test.ts` and described in
 `docs/contract.md`.
 
 - `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
-  with an integer `code` and a string `message`.
-- Input validation follows `@modelcontextprotocol/sdk@1.30.0` and refuses
-  three shapes the `2026-07-28` definitions accept: URL elicitation without
-  `elicitationId`, a sampling tool whose `outputSchema` is not rooted at
-  `object`, and a tool result whose `structuredContent` is not an object.
+  with an integer `code` and a string `message` (expected-fail tests).
+- Input validation accepts a non-string `$schema` inside a sampling tool's
+  `inputSchema` or `outputSchema`, which the schema rejects, so such a request
+  reaches `tasks/get` non-conforming. It also still refuses an
+  `execution.taskSupport` value outside the SDK 1.30.0 enum, a field the
+  `2026-07-28` `Tool` does not define. Both are pinned as current behaviour
+  pending a decision.
 
 ## [0.2.1] - 2026-08-11
 

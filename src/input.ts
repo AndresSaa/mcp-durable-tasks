@@ -1,9 +1,14 @@
 import type { InputRequest, InputResponse } from "./types.js";
 import { isJsonValue } from "./json.js";
 
-// Runtime mirror of the zero-dependency input union imported by ext-tasks.
-// Authority: @modelcontextprotocol/sdk@1.30.0 src/types.ts, not the generated
-// ext-tasks JSON Schema (which loses these imported shapes).
+// Structural runtime check of the input unions the 2026-07-28 extension
+// imports from the MCP base types (test/fixtures/ext-tasks/spec.types.ts,
+// `InputRequest` / `InputResponse`). It was first written from
+// @modelcontextprotocol/sdk@1.30.0 src/types.ts, whose 2025-11-25 shapes it
+// still follows where the two agree. It is not a complete mirror of either:
+// test/schema-conformance.test.ts pins, against the stable schema, the shapes
+// on which this check and 2026-07-28 agree and each divergence found so far
+// (docs/contract.md#input-rounds).
 
 const INPUT_REQUEST_METHODS: ReadonlySet<string> = new Set([
   "sampling/createMessage",
@@ -160,7 +165,8 @@ function isSamplingContentBlock(value: unknown): boolean {
       typeof value.toolUseId === "string" &&
       Array.isArray(value.content) &&
       value.content.every(isToolResultContentBlock) &&
-      isOptional(value, "structuredContent", isObject) &&
+      // `structuredContent` may be any JSON value in 2026-07-28; the caller
+      // has already checked that the whole tree is JSON.
       isOptional(value, "isError", (entry) => typeof entry === "boolean") &&
       isOptional(value, "_meta", isObject)
     );
@@ -227,11 +233,9 @@ function isSamplingTool(value: unknown): boolean {
     value.inputSchema.type === "object" &&
     isOptional(value, "title", (entry) => typeof entry === "string") &&
     isOptional(value, "description", (entry) => typeof entry === "string") &&
-    isOptional(
-      value,
-      "outputSchema",
-      (entry) => isObject(entry) && entry.type === "object",
-    ) &&
+    // Any JSON Schema object: unlike `inputSchema`, the 2026-07-28 `Tool` does
+    // not require `type: "object"` at the root of `outputSchema`.
+    isOptional(value, "outputSchema", isObject) &&
     isOptional(value, "annotations", isToolAnnotations) &&
     isOptional(
       value,
@@ -389,7 +393,10 @@ function isElicitationRequest(value: Record<string, unknown>): boolean {
   }
   const params = value.params;
   if (params.mode === "url") {
-    return typeof params.elicitationId === "string" && isUrl(params.url);
+    // 2026-07-28 URL elicitation has no `elicitationId`. The 2025-11-25 field
+    // is not required, and when present it is carried like any other
+    // unlisted field.
+    return isUrl(params.url);
   }
   if (params.mode !== undefined && params.mode !== "form") return false;
   if (!isObject(params.requestedSchema)) return false;
@@ -402,7 +409,10 @@ function isElicitationRequest(value: Record<string, unknown>): boolean {
   );
 }
 
-/** Runtime counterpart of the official 2026-07-28 `InputRequest` union. */
+/**
+ * Runtime check for the 2026-07-28 `InputRequest` union, within the limits the
+ * header describes.
+ */
 export function isInputRequest(value: unknown): value is InputRequest {
   if (
     !isJsonValue(value) ||

@@ -217,14 +217,15 @@ const answers = await task.requestInput({
   `sampling/createMessage`, `roots/list` or `elicitation/create` request, with
   the fields that request actually requires. Anything else throws `TypeError`
   before the task moves.
-- **Validation follows the SDK source at version 1.30.0**, including integer
-  `maxTokens`, Base64 binary blocks, object-rooted tool schemas,
-  `execution.taskSupport`, `file://` roots, and URL elicitation's required
-  `elicitationId` plus URL-valid `url`. The stable `2026-07-28` schema defines
-  this union concretely, and three of these rules are stricter than it: it has
-  no `elicitationId`, does not require an object-rooted `outputSchema`, and
-  allows non-object `structuredContent` in a tool result. Those are known
-  defects ([contract](contract.md#input-rounds)), not fixed yet.
+- **Validation was written from the SDK source at version 1.30.0** and is
+  checked against the stable `2026-07-28` definitions: integer `maxTokens`,
+  Base64 binary blocks, an object-rooted tool `inputSchema`,
+  `execution.taskSupport`, `file://` roots, and a URL-valid `url` for URL
+  elicitation. Following `2026-07-28`, URL elicitation does not need an
+  `elicitationId` (one that is present is kept), a tool `outputSchema` may be
+  any JSON Schema object, and a tool result's `structuredContent` may be any
+  JSON value. The remaining differences from the schema are listed in the
+  [contract](contract.md#input-rounds).
 - **Keys are unique for the whole lifetime of the task**, including after it is
   terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
 - **The promise settles exactly once**: it resolves when every key is answered,

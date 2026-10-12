@@ -216,16 +216,17 @@ through `JSON.stringify`/`JSON.parse`.
 The input round-trip additionally validates the full MCP shape before a write:
 sampling content must be one of its discriminated text, image, audio, tool-use
 or tool-result blocks; elicitation schemas stay within MCP's primitive subset;
-URL elicitation requires an opaque id and a valid URL; roots use `file://`;
-binary blocks are Base64; and accepted elicitation values are primitives or
-string arrays. These rules are pinned to the
-[`@modelcontextprotocol/sdk@1.30.0` source](https://github.com/modelcontextprotocol/typescript-sdk/blob/1.30.0/src/types.ts).
-A JSON object is not accepted merely because it is serialisable. Checked
-against the stable `2026-07-28` schema, they still refuse three shapes that
-revision accepts — URL elicitation without `elicitationId`, a tool
-`outputSchema` not rooted at `object`, and non-object `structuredContent` —
-and the engine does not yet enforce a JSON-RPC error shape for `fail()`.
-These are known defects
+URL elicitation requires a valid URL; roots use `file://`; binary blocks are
+Base64; and accepted elicitation values are primitives or string arrays. These
+rules were written from the
+[`@modelcontextprotocol/sdk@1.30.0` source](https://github.com/modelcontextprotocol/typescript-sdk/blob/1.30.0/src/types.ts)
+and are checked against the stable `2026-07-28` schema. Three SDK rules that
+refused shapes `2026-07-28` defines (URL elicitation without `elicitationId`,
+a tool `outputSchema` not rooted at `object`, non-object `structuredContent`)
+now follow that revision; the remaining differences are listed in the
+[contract](docs/contract.md#input-rounds). A JSON object is not accepted
+merely because it is serialisable. The engine does not yet enforce a JSON-RPC
+error shape for `fail()`. That is a known defect
 ([contract](docs/contract.md#wire-contract)), not fixed yet.
 
 | Mode                     | Process crash, `SIGKILL`, restart | Host or power loss             |
