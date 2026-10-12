@@ -24,6 +24,17 @@ export interface TaskStoreUnderTest {
    */
   advanceTime?: (ms: number) => void | Promise<void>;
   /**
+   * Where this store's clock is right now, as epoch milliseconds.
+   *
+   * Optional, and only meaningful next to `advanceTime`. The TTL checks stamp
+   * the tasks they create from it, so the store's clock may start anywhere.
+   * When it is omitted the kit assumes the clock starts at
+   * `2026-01-01T00:00:00.000Z` (the historical default), and a store whose
+   * clock starts elsewhere fails the TTL checks for a reason that is not its
+   * fault — declare `now` and that stops being a concern.
+   */
+  now?: () => number;
+  /**
    * Close the current store and return a new instance over the same backing
    * data. Durability checks are skipped when this seam is unavailable.
    */
@@ -142,6 +153,24 @@ export function conformanceRecord(
     version: 0,
     ...overrides,
   } as TaskRecord;
+}
+
+const CLOCK_HINT =
+  " (if this store's clock does not start at 2026-01-01T00:00:00.000Z, " +
+  "declare where it is with the subject's now() so the kit stamps tasks from it)";
+
+/** A record stamped from the subject's clock, when it declares one. */
+function timedRecord(
+  subject: TaskStoreUnderTest,
+  overrides: Partial<TaskRecord> = {},
+): TaskRecord {
+  if (subject.now === undefined) return conformanceRecord(overrides);
+  const stamp = new Date(subject.now()).toISOString();
+  return conformanceRecord({
+    createdAt: stamp,
+    lastUpdatedAt: stamp,
+    ...overrides,
+  });
 }
 
 /* -- the checks ----------------------------------------------------------- */
@@ -500,8 +529,9 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
   {
     name: "a task with ttlMs: null never expires",
     needsClock: true,
-    async run({ store, advanceTime }) {
-      const record = conformanceRecord({ ttlMs: null });
+    async run(subject) {
+      const { store, advanceTime } = subject;
+      const record = timedRecord(subject, { ttlMs: null });
       await store.create(record);
       await advanceTime!(10_000_000);
       const found = await store.get(record.taskId);
@@ -511,12 +541,13 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
   {
     name: "get() hides an expired task before any sweep runs",
     needsClock: true,
-    async run({ store, advanceTime }) {
-      const record = conformanceRecord({ ttlMs: 1_000 });
+    async run(subject) {
+      const { store, advanceTime } = subject;
+      const record = timedRecord(subject, { ttlMs: 1_000 });
       await store.create(record);
       assert(
         (await store.get(record.taskId)) !== undefined,
-        "task vanished before its TTL elapsed",
+        "task vanished before its TTL elapsed" + CLOCK_HINT,
       );
 
       await advanceTime!(1_000);
@@ -530,8 +561,9 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
   {
     name: "expiry is measured from createdAt, not from when ttlMs changed",
     needsClock: true,
-    async run({ store, advanceTime }) {
-      const record = conformanceRecord({ ttlMs: 1_000 });
+    async run(subject) {
+      const { store, advanceTime } = subject;
+      const record = timedRecord(subject, { ttlMs: 1_000 });
       await store.create(record);
 
       await advanceTime!(500);
@@ -540,7 +572,7 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
       await advanceTime!(1_000); // 1500ms in: inside the extended window
       assert(
         (await store.get(record.taskId)) !== undefined,
-        "task expired inside its extended window",
+        "task expired inside its extended window" + CLOCK_HINT,
       );
 
       await advanceTime!(500); // 2000ms from createdAt: the window closes
@@ -554,15 +586,20 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
   {
     name: "sweep() counts what it removed",
     needsClock: true,
-    async run({ store, advanceTime }) {
-      const expiring = conformanceRecord({ ttlMs: 1_000 });
-      const permanent = conformanceRecord({ ttlMs: null });
+    async run(subject) {
+      const { store, advanceTime } = subject;
+      const expiring = timedRecord(subject, { ttlMs: 1_000 });
+      const permanent = timedRecord(subject, { ttlMs: null });
       await store.create(expiring);
       await store.create(permanent);
 
       await advanceTime!(1_000);
       const swept = await store.sweep();
-      assertEqual(swept, 1, "number of expired tasks removed by sweep()");
+      assertEqual(
+        swept,
+        1,
+        "number of expired tasks removed by sweep()" + CLOCK_HINT,
+      );
       assert(
         (await store.get(permanent.taskId)) !== undefined,
         "sweep() removed a task that had not expired",

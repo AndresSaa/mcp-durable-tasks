@@ -12,6 +12,14 @@ either is a major version.
 
 ### Fixed
 
+- The conformance kit no longer requires the store's clock to start inside
+  `2026-01-01T00:00:00Z` plus one second. `TaskStoreUnderTest` gains an
+  optional `now()` (epoch milliseconds, next to `advanceTime`); when declared,
+  the TTL checks stamp their tasks from it, so a clock that starts at
+  `Date.now()` or anywhere else passes. Without `now()` behaviour is unchanged
+  (the old fixed origin is assumed) and the TTL failures now name the missing
+  `now()` instead of reporting a store bug. Additive: no existing factory
+  needs a change.
 - **Breaking:** `ttlMs` and `pollIntervalMs` must now be integer milliseconds
   within the safe-integer range, as the stable `2026-07-28` schema requires.
   `createTask()`, `progress()` and the `defaultTtlMs` / `defaultPollIntervalMs`

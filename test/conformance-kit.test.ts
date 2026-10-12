@@ -341,3 +341,46 @@ describe("the kit catches stores that are wrong", () => {
     expect(failedNames).toMatch(expected);
   });
 });
+
+describe("the kit works with any clock origin the subject can advance", () => {
+  const origins = [
+    ["the wall clock", () => Date.now()],
+    [
+      "one second before the old fixed base",
+      () => Date.parse("2025-12-31T23:59:59.000Z"),
+    ],
+    ["a distant future", () => Date.parse("2040-06-15T12:00:00.000Z")],
+  ] as const;
+
+  it.each(origins)(
+    "passes MemoryTaskStore starting at %s",
+    async (_name, start) => {
+      const report = await checkTaskStore("MemoryTaskStore", () => {
+        const clock = movableClock(start());
+        return {
+          store: new MemoryTaskStore({ now: clock.now }),
+          advanceTime: clock.advance,
+          now: clock.now,
+        };
+      });
+      expect(report.outcomes.filter((o) => o.status === "failed")).toEqual([]);
+      expect(report.ok).toBe(true);
+    },
+  );
+
+  it("names the missing now() when an undeclared origin misfires the TTL checks", async () => {
+    const report = await checkTaskStore("MemoryTaskStore", () => {
+      const clock = movableClock(Date.now());
+      return {
+        store: new MemoryTaskStore({ now: clock.now }),
+        advanceTime: clock.advance,
+      };
+    });
+    expect(report.ok).toBe(false);
+    const messages = report.outcomes
+      .filter((o) => o.status === "failed")
+      .map((o) => String((o.error as Error).message))
+      .join(" | ");
+    expect(messages).toMatch(/now\(\)/);
+  });
+});
