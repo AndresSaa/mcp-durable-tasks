@@ -102,6 +102,18 @@
   A10 actualizadas y abiertas. Quedan pendientes, en cambios separados:
   repinchar `scripts/check-schema.mjs` y los fixtures a `2026-07-28`, y migrar
   el ejemplo y las reproducciones a `server >= 2.3.0`.
+- ✅ **Ejemplo y reproducciones sobre `server` 2.3.1 (12 oct 2026).** A6
+  re-medida con la cabecera `Mcp-Name`: los handlers con schema explícito
+  sirven los tres métodos; el registro tipado y `fallbackRequestHandler` siguen
+  dando `-32601` para get y cancel. `crash-recovery` exige `^2.3.0` y ya no usa
+  middleware. Dos hallazgos que el plan no preveía: sin `Mcp-Name` el SDK
+  responde `-32020` antes del era-gate (por eso la reproducción de 2.0.0 dejó
+  de medir A6), y el SDK mueve `params.inputResponses` de `tasks/update` a
+  `ctx.mcpReq.inputResponses`. A10 re-medida: el servidor sigue sellando
+  `"complete"`; el cliente ya no rellena el discriminador ausente. Contradice
+  el plan: las reproducciones se actualizaron en vez de quedarse congeladas en
+  `2.0.0`; la medición anterior sigue en `v0.2.1` (ver abajo). Pendiente: el
+  repinchado de `check:schema` y fixtures.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en
@@ -402,8 +414,8 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
 - **R7.3 — Gate de regresión, no Work Item.** Upstream readmitió los métodos
   en `server` 2.3.0 para handlers con schema explícito
   ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)).
-  La re-medición con el SDK instalado se hace en la migración del ejemplo, que
-  elimina el workaround de host que ya no haga falta. Reabrir una costura
+  Re-medido con `server` 2.3.1 en la migración del ejemplo, que eliminó el
+  workaround de host sin dejar ninguna costura residual. Reabrir una costura
   dentro del paquete requeriría una discusión y un cambio contractual
   independientes.
 
@@ -445,7 +457,8 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
 
   Tres cosas que salieron al construirla:
 
-  - **`server.mts` tuvo que implementar la costura de A6.** `tasks/get` y
+  - **`server.mts` tuvo que implementar la costura de A6** (hasta la
+    migración a `server` 2.3.1, que la retiró). `tasks/get` y
     `tasks/cancel` no se pueden servir por el registro de handlers del SDK, así
     que responde esos POST en middleware HTTP **antes** de `createMcpHandler`.
     Es la vía del Inspector, y **eso responde de facto a R7.1/F7.2**: la
@@ -494,10 +507,14 @@ examples/
   crash-recovery/              documentación viva   — se actualiza con lo soportado
 ```
 
-- `conformance-reproductions/` fija `@modelcontextprotocol/*` en `2.0.0` sin
-  rango, **y sigue fijado incluso después de que upstream lo arregle**. Un
-  issue enlaza a un script en un commit concreto como su evidencia; ese enlace
-  tiene que seguir significando lo que significaba cuando lo revisaron.
+- `conformance-reproductions/` fija `@modelcontextprotocol/*` en versiones
+  exactas, sin rango. Un issue enlaza a un script en un commit concreto como su
+  evidencia; ese enlace tiene que seguir significando lo que significaba cuando
+  lo revisaron. **Revisado el 12 oct 2026:** el plan decía que seguirían en
+  `2.0.0` incluso después del arreglo upstream. Como los enlaces de los issues
+  apuntan a commits (el de #2598 a `27bf8cb`), subir las versiones no los
+  invalida; se sube solo como re-medición deliberada, con su resultado en
+  `contract.md`, y la medición de `2.0.0` queda en el tag `v0.2.1`.
 - `crash-recovery/` es lo contrario: tiene que seguir el rango soportado y
   representar la forma recomendada de usar la librería.
 
@@ -902,8 +919,8 @@ F12 (v0.3.0 preferida, emisor, gated por A7) ──▶ F13 (v0.4.0 preferida, no
                   └─ si sigue bloqueada + F13 está ready: decisión contractual
                      separada, F13 ocupa el siguiente minor y F12 se reprograma
 F11 (artículo) es distribución y puede ir en paralelo; no bloquea F12.
-F7 está cerrada sin feature; A6 está cerrada upstream y se re-mide al migrar
-el ejemplo. El driver de cliente está retirado, no pendiente.
+F7 está cerrada sin feature; A6 está cerrada upstream y re-medida aquí sobre
+server 2.3.1. El driver de cliente está retirado, no pendiente.
 ```
 
 SQLite no se adelanta por novedad ni como palanca de audiencia. Solo cambia el

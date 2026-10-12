@@ -146,8 +146,9 @@ dispatcher code are summarised in the
 [SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility). The
 package does not ship either seam: the verified HTTP route belongs to the host.
 Since `@modelcontextprotocol/server` 2.3.0 the need is removed upstream for
-handlers registered with an explicit schema (A6); that path has not yet been
-re-measured here. The package has no client entry point either: the requester
+handlers registered with an explicit schema (A6). Measured here on 2.3.1, that
+registration serves all three methods, and the crash-recovery example uses it
+with no workaround. The package has no client entry point either: the requester
 side belongs to the official `@modelcontextprotocol/ext-tasks/client`.
 
 ## Cost profile

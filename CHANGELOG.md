@@ -30,6 +30,29 @@ either is a major version.
   specification routes every request for a task by the `Mcp-Name` header).
   Worker process affinity is unchanged; the documentation now describes it as
   the routing model the specification defines.
+- `examples/crash-recovery/` now requires `@modelcontextprotocol/server`
+  `^2.3.0` and `@modelcontextprotocol/node` `^2.1.1`, and serves `tasks/get`,
+  `tasks/update` and `tasks/cancel` through handlers registered with an
+  explicit schema. The HTTP middleware that answered those requests before the
+  SDK saw them is gone. `tasks/update` reads its responses from
+  `ctx.mcpReq.inputResponses`, because the SDK moves `params.inputResponses`
+  there on a `2026-07-28` request, and the demo client now sends the required
+  `Mcp-Name` header on task requests.
+- `examples/conformance-reproductions/` re-measured A6 and A10 on server and
+  client 2.3.1 with `@modelcontextprotocol/node` 2.1.1; the 2.0.0 versions
+  stay at the `v0.2.1` tag. With the `Mcp-Name` header the SDK now requires,
+  explicit-schema handlers serve all three task methods, while typed
+  registration and `fallbackRequestHandler` still answer `-32601` for get and
+  cancel. Without it the request is rejected with `-32020` before dispatch,
+  which is why the 2.0.0 reproduction no longer measured A6. A10 still
+  reproduces on the server: it stamps `resultType: "complete"` on a task
+  handle that omits its discriminator. The 2.3.1 client no longer fills in an
+  absent discriminator itself. The results and their environment are in
+  `docs/contract.md`.
+- Recorded that the stable `2026-07-28` schema accepts `resultType` on
+  `tasks/get` results and requires it; only the pre-stable `draft` fixture,
+  which closes each task variant with `additionalProperties: false`, rejects
+  it.
 
 ## [0.2.1] - 2026-08-11
 
