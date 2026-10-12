@@ -20,10 +20,12 @@ what you want, and they are unrelated to this one.
 ## Scope is a constraint, not a starting point
 
 The shipped package implements one role from one extension: the server-side
-engine and the `TaskStore` behind it. The roadmap admits only a task follower
-that starts after the host already has a task handle and a first-party
-`node:sqlite` store for one dedicated local file. Neither is a general MCP
-client or a connector family. The small size **is** the product, so some
+engine and the `TaskStore` behind it. The roadmap admits only a change emitter
+for `notifications/tasks` (the engine emits, the host delivers) and a
+first-party `node:sqlite` store for one dedicated local file. Neither is a
+transport or a connector family, and there is no client side: that belongs to
+the official `@modelcontextprotocol/ext-tasks/client`. The small size **is**
+the product, so some
 perfectly reasonable ideas will be declined, and it is not personal:
 
 - **Zero runtime dependencies on the main entry point.** `process-wal` is an
@@ -41,10 +43,9 @@ perfectly reasonable ideas will be declined, and it is not personal:
   Fastify, Next or Nitro; not LangGraph, Temporal, Inngest or Vercel Workflow.
 - **No retries, backoff, dead-letter, priorities, scheduling or cron.** This is
   not a queue.
-- **No transport, auth or version negotiation.** That is the SDK's job. The
-  planned client-side exception only follows an injected task handle through a
-  structural adapter; it does not intercept the SDK or own its compatibility
-  seam. A6 workarounds remain in the host.
+- **No transport, auth or version negotiation.** That is the SDK's job. No MCP
+  client or task follower either. SDK compatibility workarounds (A6) remain in
+  the host.
 - **No CLI, dashboard or replay viewer.**
 - **No `2025-11-25` task vocabulary.** That revision's tasks are a different,
   retired design.

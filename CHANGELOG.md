@@ -12,11 +12,24 @@ either is a major version.
 
 ### Changed
 
-- Defined the gated pre-1.0 roadmap: a narrow task follower is preferred for
-  `0.3.0`, followed by a first-party `node:sqlite` store for one dedicated local
-  file in `0.4.0`. Reassigning that order requires a separate contract decision;
-  libSQL, Turso, `better-sqlite3` and generic MCP client behavior remain out of
-  scope.
+- Defined the gated pre-1.0 roadmap: a change emitter for the optional
+  `notifications/tasks` is preferred for `0.3.0` (the engine emits each
+  committed change; delivery stays in the host), followed by a first-party
+  `node:sqlite` store for one dedicated local file in `0.4.0`. Reassigning that
+  order requires a separate contract decision; libSQL, Turso, `better-sqlite3`
+  and any MCP client behavior remain out of scope.
+- Dropped the planned `mcp-durable-tasks/client` task follower by an explicit
+  contract decision. The official `@modelcontextprotocol/ext-tasks/client`
+  covers the requester side, and the documentation now presents this package
+  as its server-side counterpart.
+- Documentation now targets the stable `2026-07-28` revision of the Tasks
+  specification and schema instead of the moving `draft`.
+- Settled conformance questions A1 (missing client capability is `-32021`), A6
+  (the SDK serves `tasks/get` and `tasks/cancel` handlers registered with an
+  explicit schema from `@modelcontextprotocol/server` 2.3.0) and A9 (the
+  specification routes every request for a task by the `Mcp-Name` header).
+  Worker process affinity is unchanged; the documentation now describes it as
+  the routing model the specification defines.
 
 ## [0.2.1] - 2026-08-11
 

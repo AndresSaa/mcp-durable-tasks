@@ -6,12 +6,16 @@
 > se archivaron fuera del repositorio antes del primer push y se eliminaron;
 > el historial se compactó para que tampoco viajen en commits anteriores.
 >
-> **Revisión 5** — 28 agosto 2026. `v0.2.1` es la publicación actual. El
-> orden preferido es `v0.3.0` (Fase 12, driver de cliente) y `v0.4.0` (Fase
-> 13, `NodeSqliteTaskStore`). Si F12 sigue bloqueada upstream, una puerta
-> explícita permite reasignar el siguiente minor; no se hace en silencio. F13
-> no es una familia de conectores SQL. El procedimiento de publicación vive en
-> [`RELEASE.md`](./RELEASE.md).
+> **Revisión 6** — 12 octubre 2026. `v0.2.1` es la publicación actual. La spec
+> `2026-07-28` es estable, el SDK arregló el era-gate en `server` 2.3.0 y el
+> paquete oficial `@modelcontextprotocol/ext-tasks` cubre el lado cliente. El
+> driver de cliente sale del roadmap por
+> [decisión contractual](./contract.md#decision-no-client-follower). El orden
+> preferido pasa a ser `v0.3.0` (Fase 12, emisor de cambios para
+> `notifications/tasks`) y `v0.4.0` (Fase 13, `NodeSqliteTaskStore`). Si F12
+> sigue bloqueada por A7, una puerta explícita permite reasignar el siguiente
+> minor; no se hace en silencio. F13 no es una familia de conectores SQL. El
+> procedimiento de publicación vive en [`RELEASE.md`](./RELEASE.md).
 
 ---
 
@@ -92,10 +96,18 @@
 - ✅ **Fase 10 completa.** Los hallazgos se dividieron por componente y
   propietario: schema en `ext-tasks`, `resultType` en `typescript-sdk` y una
   reproducción independiente en el issue existente del era-gate.
-- ⏸️ **Prioridad: Fase 12 / `v0.3.0` (driver de cliente).** Sigue gated por
-  una revisión actual de A6/A10 o por necesidad de usuario documentada. No se
-  convierte un workaround provisional del SDK en API pública. La Fase 7 quedó
-  cerrada como investigación sin feature; A6 permanece como gate de regresión.
+- ✅ **Alineación con la spec estable (12 oct 2026), solo documentación.**
+  Enlaces repinchados a `2026-07-28`; A1 (`-32021`), A6 (fix del SDK en
+  `server` 2.3.0) y A9 (cabecera `Mcp-Name`) cerradas en el contrato; A7, A8 y
+  A10 actualizadas y abiertas. Quedan pendientes, en cambios separados:
+  repinchar `scripts/check-schema.mjs` y los fixtures a `2026-07-28`, y migrar
+  el ejemplo y las reproducciones a `server >= 2.3.0`.
+- ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
+  roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
+  La decisión y su razonamiento están en
+  [`contract.md`](./contract.md#decision-no-client-follower). La Fase 7 quedó
+  cerrada como investigación sin feature.
+- ⏸️ **Prioridad: Fase 12 / `v0.3.0` (emisor de cambios).** Gated por A7.
 - 📋 **Fase 13 / `v0.4.0` preferida está en el roadmap.** Un
   `NodeSqliteTaskStore` de primer partido y fichero dedicado; no arrastra
   libSQL, Turso, Postgres ni `better-sqlite3`. Si F12 continúa bloqueada y F13
@@ -387,11 +399,13 @@ preferencia:** los [no objetivos](./contract.md#non-goals) excluyen implementar 
   la costura HTTP de host, que no requiere imports internos ni renombrado bajo
   `Protocol`. El paquete no publica `/sdk-v2`, no importa el SDK y no convierte
   un defecto de una versión concreta en API propia.
-- **R7.3 — Gate de regresión, no Work Item.** Antes de F12 se vuelve a medir A6
-  con el SDK instalado. Si upstream readmite los métodos, se elimina el
-  workaround del ejemplo/host que ya no haga falta; si no, permanece fuera de
-  `/client`. Reabrir una costura dentro del paquete requeriría una discusión y
-  un cambio contractual independientes.
+- **R7.3 — Gate de regresión, no Work Item.** Upstream readmitió los métodos
+  en `server` 2.3.0 para handlers con schema explícito
+  ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)).
+  La re-medición con el SDK instalado se hace en la migración del ejemplo, que
+  elimina el workaround de host que ya no haga falta. Reabrir una costura
+  dentro del paquete requeriría una discusión y un cambio contractual
+  independientes.
 
 ---
 
@@ -550,158 +564,74 @@ comprueba clonando en limpio antes de publicar, no después.
 
 ---
 
-## Fase 12 — Driver de cliente para Tasks · v0.3.0 preferida · gated
+## Fase 12 — Emisor de cambios para `notifications/tasks` · v0.3.0 preferida · gated
 
-El siguiente trabajo de producto por prioridad, no por dependencia técnica.
-`v0.2.1` ya está publicada, pero
-[A6 y A10](./contract.md#extension-conformance-questions) siguen abiertas en
-la versión medida del SDK. F12 no se inicia hasta pasar la puerta de readiness
-descrita abajo.
+### Qué sustituye: el driver de cliente, retirado
 
-### Límite: seguir una task, no implementar un cliente MCP
+La revisión 5 de este plan reservaba F12 para `mcp-durable-tasks/client`, un
+driver que seguía una task desde un `CreateTaskResult` o un `taskId` mediante
+un adaptador estructural. **Se retira, no se reprograma.** El paquete oficial
+`@modelcontextprotocol/ext-tasks` (inspeccionado en `0.2.2`) ya ofrece en
+`/client` sesiones requester contra servidores `2026-07-28`: `callTool`,
+polling, input y recuperación. Un segundo cliente aquí competiría con el
+oficial, y su puerta de readiness dependía de A6, que upstream ya cerró. El
+razonamiento completo, que también exige `AGENTS.md` para cualquier cambio de
+orden, está en
+[la decisión del contrato](./contract.md#decision-no-client-follower). El
+diseño anterior queda en el historial de git; no se reabre como «F12.2».
 
-El candidato es `mcp-durable-tasks/client`, un driver web-standard y sin
-dependencias de runtime que empieza cuando el host ya tiene un
-`CreateTaskResult` o un `taskId`. No abre conexiones, no hace `tools/call`, no
-negocia protocolo, no construye headers, no autentica y no importa el SDK
-oficial. Esas responsabilidades permanecen en el cliente MCP del host.
+### Qué es
 
-El driver recibe un adaptador estructural normalizado con tres operaciones:
+La spec estable permite que el servidor empuje `notifications/tasks` además de
+atender polls. Cada notificación lleva un `DetailedTask` completo, idéntico a
+lo que `tasks/get` devolvería en ese momento. Solo el motor sabe cuándo cambia
+el estado, así que lo que falta es un hook de cambio en `TaskLifecycle`:
 
-```ts
-interface TaskClientAdapter {
-  getTask(
-    taskId: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<GetTaskResult>;
-  updateTask(
-    taskId: string,
-    inputResponses: InputResponses,
-    options?: { signal?: AbortSignal },
-  ): Promise<UpdateTaskResult>;
-  cancelTask(
-    taskId: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<CancelTaskResult>;
-}
-```
+- **Emitir, no entregar.** Tras cada cambio confirmado a través de ese
+  `TaskLifecycle`, se emite la misma proyección cerrada que ya calcula para
+  `tasks/get`. `subscriptions/listen`, el acknowledgement, la lista de
+  `taskIds` aceptados y la escritura en el stream son del host. No viola la
+  prohibición de implementar transporte.
+- **Proceso local.** Solo ve los commits hechos por su propio `TaskLifecycle`;
+  un cambio confirmado por otra instancia sobre un store compartido no se
+  emite aquí. Eso se documenta, no se resuelve con un broker.
+- **Nada de `notifications/progress` ni `notifications/message`**: la spec
+  prohíbe enviarlos en el stream de `subscriptions/listen` de una task.
+- **Tipos con nombre.** Valorar exportar `WorkingTask`, `InputRequiredTask`,
+  `CompletedTask`, `FailedTask`, `CancelledTask` y su unión `DetailedTask`,
+  alineados con el schema `2026-07-28`.
 
-La firma pública exacta se asienta en `api.md` antes del código, pero el
-comportamiento queda cerrado aquí:
-
-- `follow()` parte de un `CreateTaskResult`; `resume()` recibe un `taskId` y
-  hace un `tasks/get` inmediato. El seed solo contiene el `Task` base:
-  nunca se devuelve como resultado detallado. Si llega `working`, el primer
-  get respeta su hint; si llega ya `input_required` o terminal, el get es
-  inmediato para obtener `inputRequests`, `result` o `error`. Ambos métodos
-  resuelven con la variante terminal completa (`completed`, `failed` o
-  `cancelled`), sin reinterpretar `error` ni extraer un resultado que pierda
-  metadatos.
-- Solo hay un `tasks/get` en vuelo por task. El siguiente delay empieza después
-  de recibir la respuesta anterior y usa el `pollIntervalMs` más reciente.
-  Cuando no hay hint, el default es 1.000 ms; un mínimo configurable, 50 ms por
-  defecto, impide hot loops. El driver puede esperar más que el hint, nunca
-  menos que `max(hint, minimumPollIntervalMs)`. Los defaults y mínimos
-  configurables, igual que cada hint recibido, deben ser enteros finitos
-  `>= 0`.
-- `resolveInput({ taskId, key, request, signal })` es responsabilidad del host.
-  Se invoca una sola vez por key durante una ejecución del driver. Cada promesa
-  queda memoizada; las respuestas asentadas en el mismo turno de microtasks se
-  envían en un único `tasks/update`, y las pendientes permiten updates
-  parciales sin volver a presentar el mismo request. Si una key ya respondida
-  reaparece en una ronda posterior, falla como violación de la unicidad
-  vitalicia de la extensión.
-- `tasks/update` solo devuelve un acknowledgement vacío. Después de cada update
-  confirmado, el driver hace un `tasks/get` inmediato antes de esperar más
-  input, programar el siguiente poll o interpretar otra transición; nunca
-  reutiliza el `DetailedTask` anterior como si fuera la respuesta del update.
-- Mientras hay resolvers pendientes mantiene un poll de liveness. El delay usa
-  el mayor valor entre el último hint (o `defaultPollIntervalMs`),
-  `minimumPollIntervalMs` e `inputWaitPollIntervalMs`. Este último es un entero
-  finito configurable `>= 0` y vale 5.000 ms por defecto. Ese get lento puede
-  observar terminalidad externa o el error de una task expirada, pero no vuelve
-  a invocar resolvers ni envía updates vacíos. Una variante terminal aborta las
-  señales de los resolvers pendientes y descarta sus resultados tardíos.
-- `getTask`, `updateTask` y `cancelTask` se serializan por task. Si una respuesta
-  de input queda lista durante un get, espera a que termine; si queda lista
-  antes de disparar el timer de liveness, cancela ese timer y el update tiene
-  prioridad. Nunca hay dos llamadas del adaptador en vuelo para el mismo id.
-- Un `AbortSignal` antes o durante el seguimiento aborta waits y requests,
-  envía como máximo un `tasks/cancel` si ya se conoce el id y termina con la
-  razón original después del acknowledgement. Si `cancelTask` falla, propaga
-  ese error operativo; la razón original sigue en `signal.reason`. No espera a
-  observar `cancelled`, porque la extensión no lo garantiza.
-- Un error de adaptador, resolver o validación se propaga sin retry ni backoff.
-  El `taskId` sigue siendo reanudable por el host. No hay persistencia cliente,
-  suscripciones ni deduplicación durable después de reiniciar el proceso.
-- El driver valida cada seed y respuesta recibida; un adaptador tipado no
-  convierte tráfico no confiable en un valor válido. No acepta métodos de la
-  task vocabulary retirada de `2025-11-25`.
-
-El paquete no incluye un adaptador específico del SDK. La documentación podrá
-mostrar uno cuando la API pública del SDK permita obtener el
-`CreateTaskResult` y enviar los tres métodos sin `transport.send()`, miembros
-protegidos, casts ni imports internos.
+La firma exacta se asienta en `api.md` antes del código.
 
 ### Puerta de readiness de F12
 
-Antes de cambiar el estado a `ready`:
-
-1. Releer spec, schema, SDK instalado e issues A6/A10; actualizar las
-   reproducciones fijadas, sin reescribir su evidencia histórica.
-2. A10 debe estar resuelta upstream **o** debe existir necesidad de usuario
-   documentada que acepte explícitamente que el host inyecte el seed obtenido
-   por otra vía pública. El driver no intercepta el response funnel del SDK.
-3. A6 debe estar resuelta upstream **o** la integración usa la costura HTTP de
-   host ya verificada. Ningún workaround de servidor entra en `/client`.
-4. Probar una integración real de `tools/call` → `CreateTaskResult` →
-   `working` → `input_required` → `completed` con APIs públicas. Un fake prueba
-   el algoritmo, no la compatibilidad con el SDK.
-5. Registrar en `contract.md` cuál de las dos rutas abrió cada gate antes de
-   crear el worktree.
+1. A7 respondida upstream (¿se reemiten notificaciones perdidas tras un crash o
+   una desconexión, o el poll es siempre la autoridad?) **o** una decisión
+   explícita del paquete registrada en `contract.md`.
+2. Releer spec estable, schema y SDK instalado; los fixtures ya deben estar
+   repinchados a `2026-07-28`.
+3. Una integración real con el SDK del host demuestra que el host puede
+   entregar la notificación sin APIs internas. Si no puede, se documenta como
+   límite del host, no se compensa dentro del paquete.
 
 ```text
 Work Item: F12.1
 Tipo: feat
-Slug: task-client-driver
+Slug: task-change-emitter
 Base: main
 Estado: blocked-by-readiness-gate
-Orca identity: feat/f12-1-task-client-driver
+Orca identity: feat/f12-1-task-change-emitter
 Relationship: no-parent
 ```
 
-Una sola Work Item y un solo PR. Sus tracks obligatorios son:
+Los tracks (contrato, emisión tras commit y no antes, CAS perdido sin
+emisión, terminalidad, cierre, integración, docs y auditoría) se detallan al
+pasar la puerta, no antes.
 
-- **F12.1a — Contrato y validación.** Superficie `/client`, adaptador
-  estructural, shapes runtime y errores; main sigue sin dependencias.
-  `src/client.ts` entra en la misma regla ESLint que prohíbe imports `node:*` en
-  `src/index.ts` y `src/testing.ts`; el boundary web-standard no depende de una
-  revisión manual.
-- **F12.1b — Polling.** Timers falsos, intervalos dinámicos, ausencia de
-  overlap, seed base frente a respuesta detallada, get obligatorio tras el ack
-  de update, prioridad update/poll, polling lento durante input pendiente,
-  terminalidad, resume y abort durante espera/request.
-- **F12.1c — Input rounds.** Dedupe por key, respuestas parciales, varias keys
-  resueltas en distinto orden y en el mismo turno, reaparición ilegal de una
-  key ya respondida, resolver que falla, terminalidad externa y cancelación con
-  prompts pendientes; los resultados tardíos no producen updates.
-- **F12.1d — Integración.** SDK real sobre HTTP, headers/routing propiedad del
-  SDK/host, resultados `complete` y `task`, A6 y A10 cubiertas por regresiones.
-- **F12.1e — Rendimiento y empaquetado.** Una ejecución retiene O(keys vistas)
-  y O(1) estado de polling; no acumula timers, listeners ni requests tras
-  terminal/abort. Tests con timers falsos recorren 10.000 polls sin tiempo real,
-  verifican una sola llamada del adaptador y un solo timer activos, y cubren la
-  carrera entre terminalidad y abort sin enviar un cancel tardío. ESM/CJS,
-  tarball sin SDK instalado, cobertura y matriz completa.
-- **F12.1f — Docs y auditoría.** README, `api.md`, `contract.md`, este plan y
-  changelog en el mismo PR. Auditoría independiente antes de merge; cada
-  defecto confirmado empieza por un test rojo.
-
-F12 y F13 no se desbloquean entre sí. El orden es una decisión de producto con
-una salida explícita: si F12 sigue bloqueada cuando F13 cumple su readiness y
-hay necesidad real del store, un cambio documental separado puede reasignar
-SQLite al siguiente minor. Los números de versión expresan orden de entrega,
-no reservas irrevocables.
+F12 y F13 no se desbloquean entre sí. Si F12 sigue bloqueada cuando F13 cumple
+su readiness y hay necesidad real del store, un cambio documental separado
+puede reasignar SQLite al siguiente minor. Los números de versión expresan
+orden de entrega, no reservas irrevocables.
 
 ---
 
@@ -735,10 +665,11 @@ entre procesos en la misma máquina. En su primera versión posee un fichero
 dedicado: no se inyecta una conexión de la aplicación y no cambia el journal
 mode de una base ajena.
 
-Sigue siendo disco local. **No** resuelve la afinidad del worker (A9): el CAS
+Sigue siendo disco local. **No** resuelve la afinidad del worker: el CAS
 protege el registro; la promesa de `requestInput()` y el `AbortSignal` siguen
-siendo del proceso que ejecuta el trabajo. Un SQLite compartido sin sticky
-routing no convierte esto en un motor de colas.
+siendo del proceso que ejecuta el trabajo. La spec la resuelve con routing por
+la cabecera `Mcp-Name` (A9, cerrada); un SQLite compartido sin ese routing no
+convierte esto en un motor de colas.
 
 ### Fuera de alcance — no se reabre en esta fase
 
@@ -963,12 +894,16 @@ Dos reglas de secuencia de esa etapa, que siguen siendo ciertas:
 Lo que queda, con la prioridad preferida y su escape explícito:
 
 ```
-F12 (v0.3.0 preferida, cliente, gated) ──▶ F13 (v0.4.0 preferida, node:sqlite)
+0.2.x (docs, schema repinchado, ejemplo sobre server >= 2.3.0)
+   │
+   ▼
+F12 (v0.3.0 preferida, emisor, gated por A7) ──▶ F13 (v0.4.0 preferida, node:sqlite)
                   │
                   └─ si sigue bloqueada + F13 está ready: decisión contractual
                      separada, F13 ocupa el siguiente minor y F12 se reprograma
 F11 (artículo) es distribución y puede ir en paralelo; no bloquea F12.
-F7 está cerrada sin feature; A6 se vuelve a medir como gate de F12.
+F7 está cerrada sin feature; A6 está cerrada upstream y se re-mide al migrar
+el ejemplo. El driver de cliente está retirado, no pendiente.
 ```
 
 SQLite no se adelanta por novedad ni como palanca de audiencia. Solo cambia el
