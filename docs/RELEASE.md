@@ -72,8 +72,9 @@ corepack pnpm audit --audit-level high
 git status --short
 ```
 
-`check:schema` toca red y confirma que los dos fixtures vendorizados no han
-derivado. `lint:package` analiza los tipos, empaqueta e instala el tarball real
+`check:schema` toca red y confirma que los tres fixtures vendorizados
+(`schema/2026-07-28/`) no han derivado; además informa, sin fallar nunca, si el
+`draft` de upstream ya difiere del snapshot. `lint:package` analiza los tipos, empaqueta e instala el tarball real
 sin `process-wal`, tanto en ESM como en CJS.
 
 Para volver a auditar sólo la atribución de los commits:

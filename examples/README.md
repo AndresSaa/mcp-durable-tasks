@@ -34,7 +34,10 @@ meant when it was reviewed. A bump is therefore a deliberate re-measurement,
 never routine maintenance: it lands together with the result it produced in
 `docs/contract.md`, and the earlier measurement stays reachable at the commit
 and tag it was published with. The `2.0.0` reproductions are at `v0.2.1`; the
-current ones pin server and client `2.3.1`.
+current ones pin server and client `2.3.1`. `schema.mts` reads the vendored
+schema rather than an SDK: it now measures the stable `2026-07-28` snapshot,
+where the issue it reproduced is fixed, and its `draft`-era version is also at
+`v0.2.1`.
 
 They are not patterns to follow. Where a reproduction shows a workaround, the
 workaround is described in the compatibility profile, not recommended here.

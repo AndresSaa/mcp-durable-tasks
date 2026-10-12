@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import { assertInputResponse, isInputRequest } from "../src/input.js";
 import type { InputRequest } from "../src/index.js";
 
-// This is the validation that replaces what the published JSON Schema lost.
-// `InputRequest` and `InputResponse` are declared upstream as unions of SDK
-// types, those imports do not resolve during generation, and both degrade to
-// an unconstrained `anyOf` — so a validator built on schema.json accepts
-// anything (docs/contract.md, conformance question A8). The runtime enforces the real shapes, which
-// makes this file the only thing standing between a malformed sampling
-// request and a client that cannot fulfil it.
+// The engine's own structural validation of input requests and responses,
+// which follows @modelcontextprotocol/sdk@1.30.0. It was written when the
+// extension's draft schema reduced both unions to an unconstrained `anyOf`.
+// The stable 2026-07-28 schema now defines them concretely; where the two
+// agree and where they diverge is pinned in schema-conformance.test.ts
+// (docs/contract.md, conformance question A8). Three cases below are refused
+// here although the 2026-07-28 definitions accept them — URL elicitation
+// without an `elicitationId`, a tool `outputSchema` not rooted at `object`, and
+// non-object `structuredContent` in a tool result. Those divergences are
+// recorded as known defects there, not silently changed here.
 //
 // Table-driven on purpose: what matters is which shapes are refused, and a
 // list of them reads as the specification it is enforcing.

@@ -78,6 +78,12 @@ would resolve.
 `ttlMs: 0` throws `TypeError`. Zero would acknowledge a task that expires the
 instant it is created, which is a task no client can ever read.
 
+Pass whole milliseconds. The stable schema types `ttlMs` and `pollIntervalMs`
+as integers within the safe-integer range, but the engine does not reject a
+fractional or larger value yet, here or in `progress()`; it would reach the
+wire and fail schema validation. This is a known defect
+([contract](contract.md#wire-contract)).
+
 #### `getTask(taskId)`
 
 Returns the `DetailedTask` variant for the current status. Throws
@@ -165,8 +171,13 @@ async function work(task: TaskHandle) {
 | `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`      |
 | `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered           |
 | `complete(result)`                | Terminal. `result` must be a JSON object                                 |
-| `fail(error)`                     | Terminal. `error` must be a JSON object                                  |
+| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
 | `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour         |
+
+¹ The stable schema requires that shape for a failed task's `error`. The engine
+only checks that `error` is a JSON object today, so any other object reaches
+`tasks/get` and fails schema validation — a known defect
+([contract](contract.md#wire-contract)).
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised
@@ -199,8 +210,11 @@ const answers = await task.requestInput({
 - **Validation follows the SDK source at version 1.30.0**, including integer
   `maxTokens`, Base64 binary blocks, object-rooted tool schemas,
   `execution.taskSupport`, `file://` roots, and URL elicitation's required
-  `elicitationId` plus URL-valid `url`. The generated extension JSON Schema
-  loses this imported union and is not used as the authority.
+  `elicitationId` plus URL-valid `url`. The stable `2026-07-28` schema defines
+  this union concretely, and three of these rules are stricter than it: it has
+  no `elicitationId`, does not require an object-rooted `outputSchema`, and
+  allows non-object `structuredContent` in a tool result. Those are known
+  defects ([contract](contract.md#input-rounds)), not fixed yet.
 - **Keys are unique for the whole lifetime of the task**, including after it is
   terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
 - **The promise settles exactly once**: it resolves when every key is answered,

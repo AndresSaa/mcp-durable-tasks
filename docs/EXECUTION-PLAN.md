@@ -99,9 +99,9 @@
 - ✅ **Alineación con la spec estable (12 oct 2026), solo documentación.**
   Enlaces repinchados a `2026-07-28`; A1 (`-32021`), A6 (fix del SDK en
   `server` 2.3.0) y A9 (cabecera `Mcp-Name`) cerradas en el contrato; A7, A8 y
-  A10 actualizadas y abiertas. Quedan pendientes, en cambios separados:
-  repinchar `scripts/check-schema.mjs` y los fixtures a `2026-07-28`, y migrar
-  el ejemplo y las reproducciones a `server >= 2.3.0`.
+  A10 actualizadas y abiertas. Quedaban pendientes, en cambios separados (ya
+  hechos, ver abajo): repinchar `scripts/check-schema.mjs` y los fixtures a
+  `2026-07-28`, y migrar el ejemplo y las reproducciones a `server >= 2.3.0`.
 - ✅ **Ejemplo y reproducciones sobre `server` 2.3.1 (12 oct 2026).** A6
   re-medida con la cabecera `Mcp-Name`: los handlers con schema explícito
   sirven los tres métodos; el registro tipado y `fallbackRequestHandler` siguen
@@ -114,6 +114,22 @@
   el plan: las reproducciones se actualizaron en vez de quedarse congeladas en
   `2.0.0`; la medición anterior sigue en `v0.2.1` (ver abajo). Pendiente: el
   repinchado de `check:schema` y fixtures.
+- ✅ **Schema repinchado a `2026-07-28` (12 oct 2026).** `check:schema` y los
+  fixtures siguen `schema/2026-07-28/` (`main` en `899c1bb`; snapshot fijado
+  por `0d0a6bd`) e incluyen `spec.types.ts`, porque `schema.ts` importa de ahí
+  las uniones de input. `check:schema` informa además, sin fallar, si `draft`
+  diverge. Los tests de schema dejan de afirmar `additionalProperties: false`
+  y `ttlMs: number`: el cierre del wire se prueba como garantía propia (allow-list
+  por estado, con campos internos y desconocidos en el record) y la salida del
+  motor se valida con Ajv 8.20.0 (devDependency) para todos los estados. A8
+  pasa a Settled. Contradice el plan: la validación encontró defectos del motor
+  que no se arreglaron aquí y quedan como `it.fails` — `ttlMs`/`pollIntervalMs`
+  no exigen entero, `fail()` no exige error JSON-RPC, `progress()` no comprueba
+  que `statusMessage` sea string en runtime, y `input.ts` (SDK 1.30.0) rechaza
+  tres formas que `2026-07-28` acepta (URL elicitation sin `elicitationId`,
+  `outputSchema` no rooted en `object`, `structuredContent` no objeto).
+  Pendiente de decisión del propietario: cómo y cuándo corregirlos, y los
+  comentarios de `src/` que aún citan `additionalProperties: false`.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

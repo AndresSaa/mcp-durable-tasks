@@ -53,6 +53,30 @@ either is a major version.
   `tasks/get` results and requires it; only the pre-stable `draft` fixture,
   which closes each task variant with `additionalProperties: false`, rejects
   it.
+- The vendored extension schema and `pnpm check:schema` now track the
+  immutable `schema/2026-07-28/` snapshot instead of the moving `draft`, and
+  vendor `spec.types.ts`, which the authoritative `schema.ts` imports its input
+  unions from. Conformance question A8 is settled: the stable schema defines
+  the input unions concretely. The test suite now validates engine output for
+  every task status against that schema; Ajv is a development dependency only,
+  and the main entry point still has no runtime dependencies.
+
+### Known issues
+
+Found by validating engine output against the stable `2026-07-28` schema.
+None is fixed in this release; each is pinned by an expected-fail test and
+described in `docs/contract.md`.
+
+- `ttlMs` and `pollIntervalMs` are not required to be integers in the safe
+  range, in `createTask()` or `progress()`. A fractional or larger value
+  reaches `tasks/get`, which the schema then rejects.
+- `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
+  with an integer `code` and a string `message`.
+- `progress()` does not check at runtime that `statusMessage` is a string.
+- Input validation follows `@modelcontextprotocol/sdk@1.30.0` and refuses
+  three shapes the `2026-07-28` definitions accept: URL elicitation without
+  `elicitationId`, a sampling tool whose `outputSchema` is not rooted at
+  `object`, and a tool result whose `structuredContent` is not an object.
 
 ## [0.2.1] - 2026-08-11
 
