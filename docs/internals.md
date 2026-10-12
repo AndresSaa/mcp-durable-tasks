@@ -21,11 +21,13 @@ pretending they might would be the sort of lie this package exists to avoid.
 
 ## Design decisions
 
-**The store record and the wire shape are two types.** Every task variant in
-the extension's schema sets `additionalProperties: false`, and a `TaskRecord`
-carries three fields no conforming response may contain: `version` for
-compare-and-swap, `inputResponses` for a round in progress, and `usedInputKeys`
-for the lifetime key ledger. `wire.ts` projects one onto the other with an
+**The store record and the wire shape are two types.** A `TaskRecord` carries
+three fields that are not part of any task the extension defines: `version`
+for compare-and-swap, `inputResponses` for a round in progress, and
+`usedInputKeys` for the lifetime key ledger. The pre-stable draft schema
+rejected them outright with `additionalProperties: false`; the stable
+`2026-07-28` schema is open and would accept them, so keeping them off the
+wire is this package's guarantee rather than one the schema checks. `wire.ts` projects one onto the other with an
 **allow-list**, not a copy-and-delete — the difference is that a new internal
 field is invisible to the wire until someone deliberately lists it, instead of
 leaking until someone remembers to exclude it.
@@ -111,17 +113,20 @@ consumer looking for the error catalogue should find all of it in one file.
 
 ## Why `input.ts` is not a schema validator
 
-The extension's published `schema.json` is generated from a TypeScript source,
-and the generation loses the part that matters here: `InputRequest` and
-`InputResponse` are declared as unions of SDK types, those imports do not
-resolve, and both degrade to an unconstrained `anyOf`. A validator built on the
-JSON Schema alone accepts literally anything as an input request.
+It was written when the extension's pre-stable draft `schema.json` lost the
+part that matters here: `InputRequest` and `InputResponse` degraded to an
+unconstrained `anyOf`, so a validator built on that JSON Schema accepted
+anything as an input request. The runtime therefore enforces the shapes
+structurally and without a dependency, mirroring the SDK 1.30.0 types.
 
-So the runtime enforces what the JSON Schema lost, structurally and without a
-dependency. This is
-[conformance question A8](contract.md#extension-conformance-questions), and it
-is one of the stronger items for the conformance report this project is aimed
-at.
+Upstream fixed the schema
+([conformance question A8](contract.md#extension-conformance-questions)): the
+stable `2026-07-28` snapshot defines both unions concretely. Using a JSON Schema
+validator at runtime would still cost the main entry point a dependency, so
+`input.ts` stays structural; the test suite checks it against the snapshot with
+a validator instead. That check found three shapes the snapshot accepts and
+`input.ts` refuses, recorded in
+[input rounds](contract.md#input-rounds) as known defects.
 
 ## Why the compatibility seam stays in the host
 
