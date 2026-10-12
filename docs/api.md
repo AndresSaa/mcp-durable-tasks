@@ -426,6 +426,10 @@ runTaskStoreConformance(
 );
 ```
 
+The checks cover the patch rules explicitly: `undefined` deletes a field,
+`null` is a value (`ttlMs: null` must come back as `null`), and `error`,
+`lastUpdatedAt` and every other patchable field must persist and round-trip.
+
 `advanceTime`, `now` and `reopen` are optional seams. Without them the checks that
 need them are **skipped, not passed** — a store that cannot fake time or
 reconnect gets an honest report rather than credit for checks that never ran.

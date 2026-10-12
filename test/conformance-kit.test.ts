@@ -269,7 +269,11 @@ function brokenStore(
     | "patch-ignores-undefined"
     | "no-cas"
     | "live-references"
-    | "drops-used-input-keys",
+    | "drops-used-input-keys"
+    | "null-deletes"
+    | "drops-error"
+    | "frozen-last-updated"
+    | "drops-status-message",
 ): TaskStore {
   const tasks = new Map<string, TaskRecord>();
   return {
@@ -304,6 +308,15 @@ function brokenStore(
         if (key === "usedInputKeys" && flaw === "drops-used-input-keys") {
           continue;
         }
+        if (key === "error" && flaw === "drops-error") continue;
+        if (key === "lastUpdatedAt" && flaw === "frozen-last-updated") continue;
+        if (key === "statusMessage" && flaw === "drops-status-message")
+          continue;
+        // null read as "delete the field".
+        if (value === null && flaw === "null-deletes") {
+          delete next[key];
+          continue;
+        }
         // The classic mistake: undefined read as "leave unchanged".
         if (value === undefined && flaw === "patch-ignores-undefined") continue;
         if (value === undefined) delete next[key];
@@ -327,6 +340,10 @@ describe("the kit catches stores that are wrong", () => {
     ["no-cas", /stale version/i],
     ["live-references", /copies|returned object|caller/i],
     ["drops-used-input-keys", /input requests|partial responses|used keys/i],
+    ["null-deletes", /null/i],
+    ["drops-error", /error/i],
+    ["frozen-last-updated", /lastUpdatedAt/i],
+    ["drops-status-message", /every field/i],
   ] as const)("fails a store whose flaw is %s", async (flaw, expected) => {
     const report = await checkTaskStore(`broken:${flaw}`, () =>
       brokenStore(flaw),

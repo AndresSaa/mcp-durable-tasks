@@ -155,6 +155,13 @@ export function conformanceRecord(
   } as TaskRecord;
 }
 
+/**
+ * A finite TTL no check waits out. Checks that are not about expiry still need
+ * a finite one now and then, and a store on a real clock would hide a task
+ * created at the fixed base time under any small value.
+ */
+const LONG_TTL_MS = 1_000_000_000_000;
+
 const CLOCK_HINT =
   " (if this store's clock does not start at 2026-01-01T00:00:00.000Z, " +
   "declare where it is with the subject's now() so the kit stamps tasks from it)";
@@ -333,6 +340,110 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
       assert(
         reread !== undefined && !("inputRequests" in reread),
         "inputRequests came back after a re-read",
+      );
+    },
+  },
+  {
+    name: "an update with ttlMs: null stores null, it does not delete the field",
+    async run({ store }) {
+      // null means "no expiry" and is a value; only undefined deletes. A store
+      // that drops the key leaves a record the wire schema refuses to serve.
+      const record = conformanceRecord({ ttlMs: LONG_TTL_MS });
+      await store.create(record);
+      const written = await store.update(record.taskId, { ttlMs: null }, 0);
+      assert(
+        "ttlMs" in written && written.ttlMs === null,
+        "update() with ttlMs: null did not store null (null was read as delete)",
+      );
+      const reread = await store.get(record.taskId);
+      assert(
+        reread !== undefined && "ttlMs" in reread && reread.ttlMs === null,
+        "ttlMs: null did not round-trip as null after a re-read",
+      );
+    },
+  },
+  {
+    name: "update() persists a failed status together with its error",
+    async run({ store }) {
+      const record = conformanceRecord();
+      await store.create(record);
+      const error = {
+        code: -32603,
+        message: "boom",
+        data: { retryable: false },
+      };
+      const written = await store.update(
+        record.taskId,
+        { status: "failed", error },
+        0,
+      );
+      assertDeepEqual(written.error, error, "error returned by update()");
+      const reread = await store.get(record.taskId);
+      assertEqual(reread?.status, "failed", "status after a failed update");
+      assertDeepEqual(reread?.error, error, "error after re-read");
+    },
+  },
+  {
+    name: "update() persists lastUpdatedAt when the patch sets it",
+    async run({ store }) {
+      const record = conformanceRecord();
+      await store.create(record);
+      const later = new Date(
+        Date.parse(record.createdAt) + 5_000,
+      ).toISOString();
+      const written = await store.update(
+        record.taskId,
+        { lastUpdatedAt: later },
+        0,
+      );
+      assertEqual(written.lastUpdatedAt, later, "lastUpdatedAt from update()");
+      const reread = await store.get(record.taskId);
+      assertEqual(reread?.lastUpdatedAt, later, "lastUpdatedAt after re-read");
+    },
+  },
+  {
+    name: "every field of a record round-trips through create, update and get",
+    async run({ store }) {
+      const record = conformanceRecord({
+        status: "input_required",
+        statusMessage: "waiting",
+        pollIntervalMs: 100,
+        ttlMs: null,
+        inputRequests: { first: { method: "roots/list" } },
+        inputResponses: { first: { roots: [] } },
+        usedInputKeys: ["first"],
+        result: { value: 1 },
+        error: { code: 1, message: "old" },
+      });
+      await store.create(record);
+      assertDeepEqual(
+        await store.get(record.taskId),
+        record,
+        "a record with every field populated, after create()",
+      );
+
+      const later = new Date(
+        Date.parse(record.createdAt) + 1_000,
+      ).toISOString();
+      const patch = {
+        status: "failed",
+        statusMessage: "changed",
+        lastUpdatedAt: later,
+        ttlMs: LONG_TTL_MS,
+        pollIntervalMs: 250,
+        inputRequests: { second: { method: "roots/list" } },
+        inputResponses: { second: { roots: [] } },
+        usedInputKeys: ["first", "second"],
+        result: { value: 2 },
+        error: { code: 2, message: "new" },
+      } as const;
+      const written = await store.update(record.taskId, patch, 0);
+      const expected = { ...record, ...patch, version: 1 };
+      assertDeepEqual(written, expected, "record returned by update()");
+      assertDeepEqual(
+        await store.get(record.taskId),
+        expected,
+        "record with every field patched, after re-read",
       );
     },
   },
