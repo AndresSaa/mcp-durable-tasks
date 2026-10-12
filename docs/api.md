@@ -284,9 +284,10 @@ interface TaskStore {
 Four rules that are easy to get wrong, and that the conformance kit checks:
 
 1. **`undefined` in a patch deletes the field.** It does not mean "leave
-   unchanged". A task leaving `input_required` clears its requests this way,
-   and a leftover map would be emitted onto a wire shape that forbids extra
-   properties. The rule covers **enumerable own string-keyed** properties.
+   unchanged". A task leaving `input_required` clears its requests this way;
+   a leftover map would leave a `working` or terminal task carrying requests
+   its status does not allow, and `tasks/get` refuses to project such a record.
+   The rule covers **enumerable own string-keyed** properties.
 2. **Every successful `update` bumps `version` by exactly one.**
 3. **Hand out copies, not references.** A caller who mutates a returned
    `result` in place must not change stored state — that would be a write with

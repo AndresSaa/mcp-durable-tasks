@@ -39,9 +39,11 @@ single-writer and can never lose a race — implements it anyway so there is one
 contract rather than two.
 
 **`undefined` in a patch deletes.** It does not mean "leave unchanged". A task
-leaving `input_required` clears its requests that way, and a spread that left
-the key present holding `undefined` would emit a property the wire shape
-forbids. This is the rule a third-party store gets wrong first, so the
+leaving `input_required` clears its requests that way. A spread that left the
+key present holding `undefined` would keep a non-JSON record, which memory and
+a WAL replay would then represent differently, and a store that ignored the
+`undefined` would keep the stale requests on a task that no longer awaits
+them. This is the rule a third-party store gets wrong first, so the
 conformance kit checks it explicitly.
 
 **Stores hand out deep copies.** A caller who mutated a returned `result` in
@@ -125,8 +127,9 @@ stable `2026-07-28` snapshot defines both unions concretely. Using a JSON Schema
 validator at runtime would still cost the main entry point a dependency, so
 `input.ts` stays structural; the test suite checks it against the snapshot with
 a validator instead. That check found three shapes the snapshot accepts and
-`input.ts` refuses, recorded in
-[input rounds](contract.md#input-rounds) as known defects.
+`input.ts` refused; those three rules now follow the `2026-07-28` base types,
+and the differences that remain are listed in
+[input rounds](contract.md#input-rounds).
 
 ## Why the compatibility seam stays in the host
 

@@ -284,7 +284,8 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
     async run({ store }) {
       // The rule every third-party store gets wrong first. The engine relies
       // on it: a task leaving input_required clears its requests this way, and
-      // a leftover map would be emitted onto a wire shape that forbids it.
+      // a leftover map would leave a record whose status forbids it, which
+      // the wire projection refuses to answer for.
       const record = conformanceRecord({
         status: "input_required",
         inputRequests: { key: { method: "roots/list" } },

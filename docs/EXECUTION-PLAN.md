@@ -130,6 +130,23 @@
   `outputSchema` no rooted en `object`, `structuredContent` no objeto).
   Pendiente de decisión del propietario: cómo y cuándo corregirlos, y los
   comentarios de `src/` que aún citan `additionalProperties: false`.
+- ✅ **Defectos del motor corregidos (12 oct 2026), salvo `fail()`.** Alcance
+  aprobado por el propietario: `ttlMs`/`pollIntervalMs` exigen entero seguro
+  en `createTask()`, `progress()` y en las opciones `default*` del constructor
+  (`TypeError`, nada se escribe); `statusMessage` se comprueba en runtime en
+  `progress()`, `cancelled()` y `createTask()`; `input.ts` acepta las tres
+  formas de `2026-07-28` (relajaciones, nada aceptado antes se rechaza ahora);
+  y los comentarios obsoletos de `src/` y `docs/` sobre
+  `additionalProperties: false` quedan corregidos. Decisiones que el plan no
+  preveía: los registros ya persistidos no se revalidan (el replay solo exige
+  JSON; un WAL antiguo con un hint fraccionario abre y se sirve tal cual hasta
+  el siguiente `progress()`), y `input.ts` se mantiene como validación propia
+  en vez de delegar en el host/SDK, porque `inputRequests` se persiste y se
+  reenvía. Fuera de alcance a propósito: `fail()` sigue sin exigir error
+  JSON-RPC (`it.fails`). Encontradas al alinear y pendientes de decisión, con
+  tests que fijan el comportamiento actual: `$schema` no string en un schema
+  de tool se acepta (el schema lo rechaza) y `execution.taskSupport`
+  desconocido se rechaza (campo SDK 1.30.0 que `2026-07-28` no define).
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

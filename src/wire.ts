@@ -8,13 +8,14 @@ import type {
 /**
  * The boundary between what a store keeps and what goes over the wire.
  *
- * Every task variant in the extension's schema sets
- * `additionalProperties: false`. A record carries three fields no conforming
- * response may contain — `version`, `inputResponses` and `usedInputKeys` —
- * so the projection is **allow-list based, never a spread**. Copying the
- * record and deleting the internal fields would leak the next one somebody
- * adds; this way a new internal field is invisible until someone deliberately
- * lists it.
+ * A record carries three internal fields that must never reach a client —
+ * `version`, `inputResponses` and `usedInputKeys`. The stable `2026-07-28`
+ * schema is open (it sets no `additionalProperties: false`), so it would not
+ * reject them: keeping the wire closed is this package's own guarantee, and
+ * `test/schema-conformance.test.ts` checks it per status. That is why the
+ * projection is **allow-list based, never a spread**. Copying the record and
+ * deleting the internal fields would leak the next one somebody adds; this
+ * way a new internal field is invisible until someone deliberately lists it.
  */
 
 const TERMINAL: ReadonlySet<TaskStatus> = new Set([
