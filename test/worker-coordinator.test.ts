@@ -91,6 +91,18 @@ describe("a cancellation with no local worker", () => {
     expect(workers.trackedTasks).toBe(1);
   });
 
+  it("is kept, like the store keeps it, when createdAt does not parse", () => {
+    // hasExpired() never expires such a record, so releasing it here would
+    // drop the signal of a task the store still serves.
+    const workers = new WorkerCoordinator(now);
+    workers.abort("t", new TaskCancelled("t"), {
+      ...record("t", 1_000),
+      createdAt: "not a date",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
   it("is released by a terminal transition and by close(), with no timer left", () => {
     const workers = new WorkerCoordinator(now);
     workers.abort("a", new TaskCancelled("a"), record("a", 1_000));
