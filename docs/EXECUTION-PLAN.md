@@ -6,13 +6,16 @@
 > se archivaron fuera del repositorio antes del primer push y se eliminaron;
 > el historial se compactó para que tampoco viajen en commits anteriores.
 >
-> **Revisión 6** — 12 octubre 2026. `v0.2.1` es la publicación actual. La spec
-> `2026-07-28` es estable, el SDK arregló el era-gate en `server` 2.3.0 y el
-> paquete oficial `@modelcontextprotocol/ext-tasks` cubre el lado cliente. El
-> driver de cliente sale del roadmap por
-> [decisión contractual](./contract.md#decision-no-client-follower). El orden
-> preferido pasa a ser `v0.3.0` (Fase 12, emisor de cambios para
-> `notifications/tasks`) y `v0.4.0` (Fase 13, `NodeSqliteTaskStore`). Si F12
+> **Revisión 7** — 13 octubre 2026. `v0.3.0` es la versión en preparación: el
+> endurecimiento tras la tercera auditoría y la alineación con la spec estable
+> `2026-07-28` contienen cambios incompatibles y, por la regla pre-1.0, no
+> pueden salir como `0.2.2`. La spec es estable, el SDK arregló el era-gate en
+> `server` 2.3.0 y el paquete oficial `@modelcontextprotocol/ext-tasks` cubre
+> el lado cliente. El driver de cliente salió del roadmap por
+> [decisión contractual](./contract.md#decision-no-client-follower). Por una
+> segunda decisión de orden ([contrato de versiones](./contract.md#version-contract)),
+> el orden preferido pasa a ser `v0.4.0` (Fase 12, emisor de cambios para
+> `notifications/tasks`) y `v0.5.0` (Fase 13, `NodeSqliteTaskStore`). Si F12
 > sigue bloqueada por A7, una puerta explícita permite reasignar el siguiente
 > minor; no se hace en silencio. F13 no es una familia de conectores SQL. El
 > procedimiento de publicación vive en [`RELEASE.md`](./RELEASE.md).
@@ -165,13 +168,24 @@
   que completa la ronda antigua se confirma pero se pierde); persistirlas
   queda pendiente de decisión del propietario. Los hallazgos del kit de
   conformidad van en un cambio separado.
+- **`v0.3.0` es la release de endurecimiento (13 oct 2026).** Agrupa todo lo
+  anterior desde `v0.2.1`: hints enteros, contenido de sampling,
+  `sweepIntervalMs`/`compactEvery`, `requestedSchema.$schema`, formas de input
+  relajadas y cuatro checks nuevos del kit. Contradice el plan: la revisión 6
+  daba por hecho que esto saldría como `0.2.x` y que `0.3.0` sería el emisor.
+  Como contiene cambios incompatibles, el propietario lo asignó a `0.3.0` y
+  movió F12 a `0.4.0` y F13 a `0.5.0`; alcance y puertas no cambian. Siguen
+  como problemas conocidos las respuestas de input tras un reinicio, `fail()`,
+  `execution.taskSupport` y `$schema` en schemas de tool. El tag se crea
+  únicamente después de fusionar su PR de versión, con `release.yml`, OIDC y
+  provenance.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en
   [`contract.md`](./contract.md#decision-no-client-follower). La Fase 7 quedó
   cerrada como investigación sin feature.
-- ⏸️ **Prioridad: Fase 12 / `v0.3.0` (emisor de cambios).** Gated por A7.
-- 📋 **Fase 13 / `v0.4.0` preferida está en el roadmap.** Un
+- ⏸️ **Prioridad: Fase 12 / `v0.4.0` (emisor de cambios).** Gated por A7.
+- 📋 **Fase 13 / `v0.5.0` preferida está en el roadmap.** Un
   `NodeSqliteTaskStore` de primer partido y fichero dedicado; no arrastra
   libSQL, Turso, Postgres ni `better-sqlite3`. Si F12 continúa bloqueada y F13
   demuestra necesidad/readiness, un cambio contractual separado puede
@@ -632,7 +646,7 @@ comprueba clonando en limpio antes de publicar, no después.
 
 ---
 
-## Fase 12 — Emisor de cambios para `notifications/tasks` · v0.3.0 preferida · gated
+## Fase 12 — Emisor de cambios para `notifications/tasks` · v0.4.0 preferida · gated
 
 ### Qué sustituye: el driver de cliente, retirado
 
@@ -703,7 +717,7 @@ orden de entrega, no reservas irrevocables.
 
 ---
 
-## Fase 13 — `NodeSqliteTaskStore` · v0.4.0 preferida · tras F12 por defecto
+## Fase 13 — `NodeSqliteTaskStore` · v0.5.0 preferida · tras F12 por defecto
 
 No es una familia de conectores. Es **un** store de primer partido que cubre
 el único hueco local que `WalTaskStore` deja a propósito.
@@ -838,7 +852,7 @@ pre-1.0 con entrada de changelog, no una sorpresa.
 No se invoca `$orca-start-work` hasta que se cumpla una de estas rutas y F13.1
 se marque `ready` en este plan:
 
-1. F12.1 está publicada como `0.3.0`; o
+1. F12.1 está publicada como `0.4.0`; o
 2. F12 sigue bloqueada, existe una necesidad demostrada de SQLite y un cambio
    documental separado reasigna `NodeSqliteTaskStore` al siguiente minor.
 
@@ -920,7 +934,7 @@ verde o con docs que describan un contrato distinto al código no se fusiona.
 ### Qué se decidió no hacer, para que no vuelva como “F13.2”
 
 Una propuesta anterior contemplaba un `LibsqlTaskStore` de cliente inyectado
-después de auditar SQLite. Se descarta para `0.4.0` y no queda como siguiente
+después de auditar SQLite. Se descarta para `0.5.0` y no queda como siguiente
 paso implícito. Un cliente remoto introduce CAS ambiguo de red, credenciales,
 un servicio reproducible y un contrato de durabilidad que este repositorio no
 puede demostrar con `SIGKILL` local. Eso es un store de comunidad, y el kit
@@ -962,10 +976,10 @@ Dos reglas de secuencia de esa etapa, que siguen siendo ciertas:
 Lo que queda, con la prioridad preferida y su escape explícito:
 
 ```
-0.2.x (docs, schema repinchado, ejemplo sobre server >= 2.3.0)
+0.3.0 (endurecimiento tras auditoría, schema repinchado, ejemplo sobre server >= 2.3.0)
    │
    ▼
-F12 (v0.3.0 preferida, emisor, gated por A7) ──▶ F13 (v0.4.0 preferida, node:sqlite)
+F12 (v0.4.0 preferida, emisor, gated por A7) ──▶ F13 (v0.5.0 preferida, node:sqlite)
                   │
                   └─ si sigue bloqueada + F13 está ready: decisión contractual
                      separada, F13 ocupa el siguiente minor y F12 se reprograma
