@@ -6,7 +6,7 @@
 | ----------- | ----------------------- |
 | Pre-release | Yes — latest `0.x` only |
 
-Nothing is published to npm yet; the first release is `0.2.0`. This is a
+Only the latest release published to npm receives fixes. This is a
 single-maintainer package with no backport branches: fixes land on the latest
 release. While the package is `0.x`, a security fix that has to break the
 documented contract ships as a minor bump with a clear changelog entry — normal
@@ -89,14 +89,14 @@ the documentation is unclear, but they will not be handled as security reports:
 
 ## Supply chain
 
-`v0.1.0` is not published to npm. The first registry release, `v0.2.0`, is a
-manual bootstrap publication protected by the maintainer's npm account and 2FA;
-it cannot carry CI provenance. The package has to exist before npm allows its
-trusted publisher to be configured.
+The first registry release, `v0.1.0`, was a manual bootstrap publication
+protected by the maintainer's npm account and 2FA; it could not carry CI
+provenance. The package had to exist before npm allowed its trusted publisher
+to be configured.
 
-After that bootstrap, releases publish from GitHub Actions using npm
+From `v0.2.0` on, releases publish from GitHub Actions using npm
 [trusted publishing](https://docs.npmjs.com/trusted-publishers) over OIDC, with
 [provenance](https://docs.npmjs.com/generating-provenance-statements) attested
 automatically. No long-lived npm token exists in this repository. Provenance on
 those later versions can be checked with `npm audit signatures`; the initial
-`0.2.0` version is the documented exception.
+`0.1.0` version is the documented exception.

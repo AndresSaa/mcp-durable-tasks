@@ -387,19 +387,30 @@ lockfile de npm y este workspace es de pnpm.
 Sólo después de un run verde se revocan las credenciales de automatización
 antiguas, si quedara alguna del bootstrap manual.
 
-## Patches automatizados posteriores a `v0.2.0`
+## Releases automatizadas posteriores a `v0.2.0`
 
-Un patch se prepara en un PR ordinario que actualiza `package.json`, cierra su
+Toda versión posterior a `v0.2.0`, patch o minor, se prepara en un PR
+ordinario (`chore: release X.Y.Z`) que actualiza `package.json`, cierra su
 sección en `CHANGELOG.md` y sincroniza cualquier versión visible en los docs.
-No se crea el tag desde la rama del PR y no se publica manualmente en npm.
+No se crea el tag desde la rama del PR y no se publica manualmente en npm. El
+[contrato de versiones](./contract.md#version-contract) decide si toca patch o
+minor: antes de `1.0.0`, cualquier cambio incompatible es minor, aunque no
+añada features. Por eso el endurecimiento posterior a `v0.2.1` sale como
+`v0.3.0` y no como `v0.2.2`.
 
-Después de fusionar el PR de versión, la secuencia para `v0.2.1` es:
+Antes de abrir el PR de versión, el gate local completo de
+[más arriba](#gate-local-antes-de-subir) tiene que estar en verde sobre la rama,
+incluido `check:schema`, que no corre en CI.
+
+Después de fusionar el PR de versión, la secuencia es la misma para cada
+versión; sólo cambia `$releaseVersion`. `v0.2.1` la usó con `"0.2.1"` y
+`v0.3.0` la usa con `"0.3.0"`:
 
 ```powershell
 git switch main
 git pull --ff-only origin main
 if (git status --porcelain) { throw "main must be clean before tagging" }
-$releaseVersion = "0.2.1"
+$releaseVersion = "0.3.0"
 if ((node -p "require('./package.json').version") -ne $releaseVersion) { throw "package.json version mismatch" }
 if (-not (Select-String -Quiet -LiteralPath CHANGELOG.md -SimpleMatch "## [$releaseVersion]")) { throw "CHANGELOG section missing" }
 $releaseTag = "v$releaseVersion"

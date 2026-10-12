@@ -10,6 +10,15 @@ either is a major version.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
+A hardening release: it closes the engine and conformance-kit findings of an
+independent audit and aligns the package with the stable `2026-07-28` revision
+of the Tasks extension. Several entries below are breaking or change behaviour;
+pre-1.0 semver ships them as a minor release, not as a `0.2.x` patch. No new
+feature is added: the `notifications/tasks` change emitter and the
+`node:sqlite` store are not built.
+
 ### Fixed
 
 - The conformance kit no longer requires the store's clock to start inside
@@ -94,11 +103,12 @@ either is a major version.
   is caught by a deliberately broken store in the kit's own tests. Both
   included stores still pass.
 - Defined the gated pre-1.0 roadmap: a change emitter for the optional
-  `notifications/tasks` is preferred for `0.3.0` (the engine emits each
+  `notifications/tasks` is preferred for `0.4.0` (the engine emits each
   committed change; delivery stays in the host), followed by a first-party
-  `node:sqlite` store for one dedicated local file in `0.4.0`. Reassigning that
-  order requires a separate contract decision; libSQL, Turso, `better-sqlite3`
-  and any MCP client behavior remain out of scope.
+  `node:sqlite` store for one dedicated local file in `0.5.0`. Both were first
+  planned one minor earlier; they moved when this release took `0.3.0`.
+  Reassigning that order requires a separate contract decision; libSQL, Turso,
+  `better-sqlite3` and any MCP client behavior remain out of scope.
 - Dropped the planned `mcp-durable-tasks/client` task follower by an explicit
   contract decision. The official `@modelcontextprotocol/ext-tasks/client`
   covers the requester side, and the documentation now presents this package
@@ -325,7 +335,8 @@ publishing with provenance starts with the next version.
   `TaskLifecycle` remains responsible for protocol decisions and committed
   worker effects.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AndresSaa/mcp-durable-tasks/releases/tag/v0.1.0
