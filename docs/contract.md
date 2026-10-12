@@ -114,6 +114,14 @@ may still complete or fail if work wins the race.
   non-finite or non-number value, or anything beyond
   `Number.MAX_SAFE_INTEGER`, and nothing is written. `ttlMs` must also be
   greater than 0; `pollIntervalMs` has no further bound, as in the schema.
+- A stored record that contradicts the state model is corrupt, and the engine
+  refuses it rather than projecting or repairing it: a status-specific payload
+  that is missing or present in the wrong state, or a `status` outside the
+  five above. `tasks/get` throws a "Stored task ... is inconsistent" error for
+  it, and so do `tasks/update`, `tasks/cancel` and every worker write when the
+  status is unknown. An unknown status is never treated as mutable, because it
+  is not terminal either; writing over it would turn a corrupt record into an
+  apparently valid task.
 - Records already in a store are not re-validated. A log written before that
   check existed may hold a fractional or out-of-range hint; it still opens,
   because replay checks only that each record is plain JSON, and expiry

@@ -287,6 +287,63 @@ describe("the wire projection", () => {
     await expect(engine.getTask("corrupt")).rejects.toThrow(/inconsistent/i);
     await engine.close();
   });
+
+  describe("a stored record whose status is not one of the five", () => {
+    async function withUnknownStatus() {
+      const store = new MemoryTaskStore();
+      await store.create({
+        taskId: "odd",
+        status: "submitted",
+        createdAt: "2026-08-09T12:00:00.000Z",
+        lastUpdatedAt: "2026-08-09T12:00:00.000Z",
+        ttlMs: null,
+        version: 0,
+      } as unknown as TaskRecord);
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      return { store, engine };
+    }
+
+    it("is reported as corrupt by getTask instead of resolving undefined", async () => {
+      const { engine } = await withUnknownStatus();
+      await expect(engine.getTask("odd")).rejects.toThrow(
+        /inconsistent.*unknown status "submitted"/i,
+      );
+      await engine.close();
+    });
+
+    it.each([
+      ["complete", (h: ReturnType<TaskLifecycle["handle"]>) => h.complete({})],
+      ["progress", (h: ReturnType<TaskLifecycle["handle"]>) => h.progress("x")],
+      [
+        "requestInput",
+        (h: ReturnType<TaskLifecycle["handle"]>) =>
+          h.requestInput({ a: ROOTS }),
+      ],
+      ["cancelled", (h: ReturnType<TaskLifecycle["handle"]>) => h.cancelled()],
+    ])("cannot be mutated by %s", async (_name, write) => {
+      const { store, engine } = await withUnknownStatus();
+      await expect(write(engine.handle("odd"))).rejects.toThrow(
+        /inconsistent/i,
+      );
+      expect(await store.get("odd")).toMatchObject({
+        status: "submitted",
+        version: 0,
+      });
+      await engine.close();
+    });
+
+    it("is refused by updateTask and cancelTask, raising no signal", async () => {
+      const { store, engine } = await withUnknownStatus();
+      const handle = engine.handle("odd");
+      await expect(engine.updateTask("odd", { a: {} })).rejects.toThrow(
+        /inconsistent/i,
+      );
+      await expect(engine.cancelTask("odd")).rejects.toThrow(/inconsistent/i);
+      expect(handle.signal.aborted).toBe(false);
+      expect(await store.get("odd")).toMatchObject({ version: 0 });
+      await engine.close();
+    });
+  });
 });
 
 describe("the public lifecycle surface", () => {

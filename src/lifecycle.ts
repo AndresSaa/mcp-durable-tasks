@@ -24,7 +24,12 @@ import {
   type MutationDecision,
   type MutationOutcome,
 } from "./task-mutator.js";
-import { isTerminal, toCreateTaskResult, toDetailedTask } from "./wire.js";
+import {
+  assertKnownStatus,
+  isTerminal,
+  toCreateTaskResult,
+  toDetailedTask,
+} from "./wire.js";
 import {
   assertPollIntervalMs,
   assertStatusMessage,
@@ -237,6 +242,7 @@ export class TaskLifecycle {
     this.#assertOpen();
     const record = await this.#store.get(taskId);
     if (record === undefined) throw new TaskNotFoundError(taskId);
+    assertKnownStatus(record);
     if (!isTerminal(record.status)) {
       this.#workers.abort(taskId, new TaskCancelled(taskId));
     }

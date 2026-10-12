@@ -4,7 +4,7 @@ import {
   TaskNotFoundError,
 } from "./errors.js";
 import type { TaskPatch, TaskRecord, TaskStore } from "./types.js";
-import { isTerminal } from "./wire.js";
+import { assertKnownStatus, isTerminal } from "./wire.js";
 
 /**
  * How many times a compare-and-swap is retried before giving up. Losing a race
@@ -70,6 +70,7 @@ export class TaskMutator {
     for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt += 1) {
       const record = await this.#store.get(taskId);
       if (record === undefined) throw new TaskNotFoundError(taskId);
+      assertKnownStatus(record);
       if (isTerminal(record.status)) {
         throw new TaskAlreadyTerminalError(taskId, record.status);
       }

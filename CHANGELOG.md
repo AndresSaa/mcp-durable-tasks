@@ -43,6 +43,13 @@ either is a major version.
   a result the schema rejects; it now throws `TypeError` and nothing is
   written. Both blocks remain valid inside a `tool_result`'s `content`. The
   exported types already excluded them.
+- A stored record whose `status` is not one of the five task states is now
+  reported as corrupt, like a record with a missing or misplaced payload.
+  `getTask()` used to resolve `undefined` for it, and `complete()`,
+  `progress()`, `requestInput()` and the other writes were allowed because
+  such a status is not terminal. Every lifecycle method now throws the
+  "inconsistent" error and leaves the record unchanged; `cancelTask()` raises
+  no signal.
 - **Breaking:** a form elicitation whose `requestedSchema.$schema` is present
   but not a string is now refused by `requestInput()` with `TypeError`. Both
   the stable schema and its TypeScript source type it as a string; it used to
