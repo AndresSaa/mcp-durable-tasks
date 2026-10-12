@@ -426,9 +426,20 @@ runTaskStoreConformance(
 );
 ```
 
-`advanceTime` and `reopen` are optional seams. Without them the checks that
+The checks cover the patch rules explicitly: `undefined` deletes a field,
+`null` is a value (`ttlMs: null` must come back as `null`), and `error`,
+`lastUpdatedAt` and every other patchable field must persist and round-trip.
+
+`advanceTime`, `now` and `reopen` are optional seams. Without them the checks that
 need them are **skipped, not passed** — a store that cannot fake time or
 reconnect gets an honest report rather than credit for checks that never ran.
+
+`now` goes with `advanceTime`: it returns where the store's clock is, in epoch
+milliseconds, and the TTL checks stamp the tasks they create from it, so the
+clock may start at `Date.now()` or anywhere else. Omit it and the kit assumes
+the clock starts at `2026-01-01T00:00:00.000Z`; a store whose clock starts
+elsewhere then fails the TTL checks, and the failure message says to declare
+`now`.
 
 ---
 
