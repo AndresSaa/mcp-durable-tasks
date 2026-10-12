@@ -3,15 +3,14 @@ import { assertInputResponse, isInputRequest } from "../src/input.js";
 import type { InputRequest } from "../src/index.js";
 
 // The engine's own structural validation of input requests and responses,
-// which follows @modelcontextprotocol/sdk@1.30.0. It was written when the
-// extension's draft schema reduced both unions to an unconstrained `anyOf`.
-// The stable 2026-07-28 schema now defines them concretely; where the two
-// agree and where they diverge is pinned in schema-conformance.test.ts
-// (docs/contract.md, conformance question A8). Three cases below are refused
-// here although the 2026-07-28 definitions accept them — URL elicitation
-// without an `elicitationId`, a tool `outputSchema` not rooted at `object`, and
-// non-object `structuredContent` in a tool result. Those divergences are
-// recorded as known defects there, not silently changed here.
+// first written from @modelcontextprotocol/sdk@1.30.0 when the extension's
+// draft schema reduced both unions to an unconstrained `anyOf`. The stable
+// 2026-07-28 schema now defines them concretely; where the two agree and where
+// they diverge is pinned in schema-conformance.test.ts (docs/contract.md,
+// input rounds). Three SDK 1.30.0 rules that refused valid 2026-07-28 shapes
+// were relaxed to match it: URL elicitation no longer needs an
+// `elicitationId`, a tool `outputSchema` need not be rooted at `object`, and a
+// tool result's `structuredContent` may be any JSON value.
 //
 // Table-driven on purpose: what matters is which shapes are refused, and a
 // list of them reads as the specification it is enforcing.
@@ -93,8 +92,30 @@ describe("what counts as an input request", () => {
       elicit({
         message: "Sign in",
         mode: "url",
+        url: "https://example.test",
+      }),
+    ],
+    [
+      "elicitation in url mode with a 2025-11-25 elicitationId",
+      elicit({
+        message: "Sign in",
+        mode: "url",
         elicitationId: "sign-in-1",
         url: "https://example.test",
+      }),
+    ],
+    [
+      "sampling whose tool output schema is not rooted at object",
+      sampling({
+        messages: [{ role: "user", content: TEXT }],
+        maxTokens: 1,
+        tools: [
+          {
+            name: "count",
+            inputSchema: { type: "object" },
+            outputSchema: { type: "string" },
+          },
+        ],
       }),
     ],
   ])("accepts %s", (_name, value) => {
@@ -146,7 +167,7 @@ describe("what counts as an input request", () => {
       }),
     ],
     [
-      "sampling whose tool output schema is not rooted at object",
+      "sampling whose tool output schema is not an object",
       sampling({
         messages: [{ role: "user", content: TEXT }],
         maxTokens: 1,
@@ -154,9 +175,17 @@ describe("what counts as an input request", () => {
           {
             name: "bad",
             inputSchema: { type: "object" },
-            outputSchema: { type: "string" },
+            outputSchema: [],
           },
         ],
+      }),
+    ],
+    [
+      "sampling whose tool input schema is not rooted at object",
+      sampling({
+        messages: [{ role: "user", content: TEXT }],
+        maxTokens: 1,
+        tools: [{ name: "bad", inputSchema: { type: "string" } }],
       }),
     ],
     ["elicitation with no message", elicit({ requestedSchema: {} })],
@@ -173,8 +202,8 @@ describe("what counts as an input request", () => {
       elicit({ message: "Sign in", mode: "url", elicitationId: "id" }),
     ],
     [
-      "elicitation in url mode with no id",
-      elicit({ message: "Sign in", mode: "url", url: "https://example.test" }),
+      "elicitation in url mode with a non-string url",
+      elicit({ message: "Sign in", mode: "url", url: 42 }),
     ],
     [
       "elicitation in url mode with an invalid URL",
@@ -228,6 +257,29 @@ describe("what counts as a response to each request", () => {
   });
 
   it.each([
+    ["an object", { celsius: 22 }],
+    ["an array", [22]],
+    ["a string", "22C"],
+    ["a number", 22],
+    ["a boolean", false],
+    ["null", null],
+  ])(
+    "accepts any JSON value, here %s, as structured tool content",
+    (_name, structuredContent) => {
+      ok(SAMPLING, {
+        model: "m",
+        role: "assistant",
+        content: {
+          type: "tool_result",
+          toolUseId: "call-1",
+          content: [],
+          structuredContent,
+        },
+      });
+    },
+  );
+
+  it.each([
     ["no model", { role: "assistant", content: TEXT }],
     ["a non-string model", { model: 1, role: "assistant", content: TEXT }],
     ["an unknown role", { model: "m", role: "system", content: TEXT }],
@@ -245,7 +297,7 @@ describe("what counts as a response to each request", () => {
       },
     ],
     [
-      "non-object structured tool content",
+      "non-JSON structured tool content",
       {
         model: "m",
         role: "assistant",
@@ -253,8 +305,16 @@ describe("what counts as a response to each request", () => {
           type: "tool_result",
           toolUseId: "call-1",
           content: [],
-          structuredContent: [],
+          structuredContent: new Map(),
         },
+      },
+    ],
+    [
+      "a tool result with no toolUseId",
+      {
+        model: "m",
+        role: "assistant",
+        content: { type: "tool_result", content: [], structuredContent: {} },
       },
     ],
   ])("refuses a sampling result with %s", (_name, response) => {

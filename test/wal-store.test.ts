@@ -136,6 +136,52 @@ describe("durability across reopen (I8)", () => {
     });
   });
 
+  // Before integer milliseconds were enforced at the API, a fractional or
+  // out-of-range hint was written to the log as given. Those logs must still
+  // open: replay validates JSON, never the hint values, and the stored value
+  // is served unchanged until the worker revises it through progress().
+  it("opens a log written with non-integer hints and lets them be revised", async () => {
+    const dir = freshDir();
+    const time = clock();
+    const first = open(dir, { now: time.now });
+    await first.create(
+      record({ ttlMs: 1500.5, pollIntervalMs: 0.5, statusMessage: "legacy" }),
+    );
+    await first.close();
+
+    const second = open(dir, { now: time.now });
+    expect(await second.get("t1")).toMatchObject({
+      ttlMs: 1500.5,
+      pollIntervalMs: 0.5,
+    });
+    const engine = new TaskLifecycle({
+      store: second,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    await expect(engine.getTask("t1")).resolves.toMatchObject({
+      status: "working",
+      ttlMs: 1500.5,
+      pollIntervalMs: 0.5,
+    });
+
+    // Expiry still follows the stored value, fractional or not.
+    time.advance(1500);
+    await expect(engine.getTask("t1")).resolves.toBeDefined();
+
+    await engine
+      .handle("t1")
+      .progress("revised", { ttlMs: 60_000, pollIntervalMs: 1_000 });
+    await engine.close();
+
+    const third = open(dir, { now: time.now });
+    expect(await third.get("t1")).toMatchObject({
+      statusMessage: "revised",
+      ttlMs: 60_000,
+      pollIntervalMs: 1_000,
+    });
+  });
+
   it("does not resurrect a task that expired while the process was down", async () => {
     const dir = freshDir();
     const time = clock();

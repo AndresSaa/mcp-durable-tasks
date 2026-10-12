@@ -42,8 +42,8 @@ const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 | Option                  | Type             | Default             | Meaning                                                                                                       |
 | ----------------------- | ---------------- | ------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `store`                 | `TaskStore`      | —                   | Required. Where task state lives.                                                                             |
-| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or `> 0`.                                              |
-| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it.                                                            |
+| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or a safe integer `> 0`.                               |
+| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it. Must be a safe integer.                                    |
 | `sweepIntervalMs`       | `number \| null` | `null`              | Automatic sweep period. The timer is `unref`'d.                                                               |
 | `now`                   | `() => number`   | `Date.now`          | Injectable clock. For tests; nothing else should pass it.                                                     |
 | `generateTaskId`        | `() => string`   | `crypto.randomUUID` | Must stay unguessable — see [Security](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md). |
@@ -79,10 +79,13 @@ would resolve.
 instant it is created, which is a task no client can ever read.
 
 Pass whole milliseconds. The stable schema types `ttlMs` and `pollIntervalMs`
-as integers within the safe-integer range, but the engine does not reject a
-fractional or larger value yet, here or in `progress()`; it would reach the
-wire and fail schema validation. This is a known defect
-([contract](contract.md#wire-contract)).
+as integers within the safe-integer range, so a fraction, `NaN`, `Infinity`, a
+non-number or a value above `Number.MAX_SAFE_INTEGER` throws `TypeError` before
+anything is stored — here, in `progress()`, and for `defaultTtlMs` /
+`defaultPollIntervalMs` in the constructor. `ttlMs` must also be greater than
+0; `pollIntervalMs: 0` is accepted. A record written before this check, with a
+non-integer hint, still opens and is served as stored until the worker revises
+it ([contract](contract.md#wire-contract)).
 
 #### `getTask(taskId)`
 
@@ -168,7 +171,7 @@ async function work(task: TaskHandle) {
 | --------------------------------- | ------------------------------------------------------------------------ |
 | `taskId`                          | The id this handle writes to                                             |
 | `signal`                          | `AbortSignal`, raised by `tasks/cancel`. Cooperative — nothing is killed |
-| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`      |
+| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`²     |
 | `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered           |
 | `complete(result)`                | Terminal. `result` must be a JSON object                                 |
 | `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
@@ -178,6 +181,13 @@ async function work(task: TaskHandle) {
 only checks that `error` is a JSON object today, so any other object reaches
 `tasks/get` and fails schema validation — a known defect
 ([contract](contract.md#wire-contract)).
+
+² Both hints follow the same rules as in `createTask()`: whole milliseconds in
+the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value
+throws `TypeError` and the whole call, message included, is not applied.
+`statusMessage` must be a string here, in `cancelled()` and in `createTask()`;
+TypeScript enforces that, and the engine checks it again at runtime for
+JavaScript callers, throwing `TypeError` without writing.
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised
@@ -207,14 +217,15 @@ const answers = await task.requestInput({
   `sampling/createMessage`, `roots/list` or `elicitation/create` request, with
   the fields that request actually requires. Anything else throws `TypeError`
   before the task moves.
-- **Validation follows the SDK source at version 1.30.0**, including integer
-  `maxTokens`, Base64 binary blocks, object-rooted tool schemas,
-  `execution.taskSupport`, `file://` roots, and URL elicitation's required
-  `elicitationId` plus URL-valid `url`. The stable `2026-07-28` schema defines
-  this union concretely, and three of these rules are stricter than it: it has
-  no `elicitationId`, does not require an object-rooted `outputSchema`, and
-  allows non-object `structuredContent` in a tool result. Those are known
-  defects ([contract](contract.md#input-rounds)), not fixed yet.
+- **Validation was written from the SDK source at version 1.30.0** and is
+  checked against the stable `2026-07-28` definitions: integer `maxTokens`,
+  Base64 binary blocks, an object-rooted tool `inputSchema`,
+  `execution.taskSupport`, `file://` roots, and a URL-valid `url` for URL
+  elicitation. Following `2026-07-28`, URL elicitation does not need an
+  `elicitationId` (one that is present is kept), a tool `outputSchema` may be
+  any JSON Schema object, and a tool result's `structuredContent` may be any
+  JSON value. The remaining differences from the schema are listed in the
+  [contract](contract.md#input-rounds).
 - **Keys are unique for the whole lifetime of the task**, including after it is
   terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
 - **The promise settles exactly once**: it resolves when every key is answered,
@@ -273,9 +284,10 @@ interface TaskStore {
 Four rules that are easy to get wrong, and that the conformance kit checks:
 
 1. **`undefined` in a patch deletes the field.** It does not mean "leave
-   unchanged". A task leaving `input_required` clears its requests this way,
-   and a leftover map would be emitted onto a wire shape that forbids extra
-   properties. The rule covers **enumerable own string-keyed** properties.
+   unchanged". A task leaving `input_required` clears its requests this way;
+   a leftover map would leave a `working` or terminal task carrying requests
+   its status does not allow, and `tasks/get` refuses to project such a record.
+   The rule covers **enumerable own string-keyed** properties.
 2. **Every successful `update` bumps `version` by exactly one.**
 3. **Hand out copies, not references.** A caller who mutates a returned
    `result` in place must not change stored state — that would be a write with

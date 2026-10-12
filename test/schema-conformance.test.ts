@@ -425,6 +425,60 @@ describe("engine outputs validate against the stable schema", () => {
     await lifecycle.close();
   });
 
+  it("carries the 2026-07-28-only input shapes through a full round", async () => {
+    const lifecycle = engine();
+    const { taskId } = await lifecycle.createTask();
+    const requests: Record<string, InputRequest> = {
+      url: {
+        method: "elicitation/create",
+        params: {
+          mode: "url",
+          message: "Sign in",
+          url: "https://example.test",
+        },
+      },
+      tool: {
+        method: "sampling/createMessage",
+        params: {
+          messages: [{ role: "user", content: TEXT }],
+          maxTokens: 8,
+          tools: [
+            {
+              name: "count",
+              inputSchema: { type: "object" },
+              outputSchema: { type: "integer" },
+            },
+          ],
+        },
+      },
+    };
+    const parked = lifecycle.handle(taskId).requestInput(requests);
+
+    const view = await untilParked(lifecycle, taskId);
+    conformsAsGetResult(view);
+    expect(
+      (view as { inputRequests: Record<string, unknown> }).inputRequests,
+    ).toEqual(requests);
+
+    const answers = {
+      url: { action: "accept" },
+      tool: {
+        model: "m",
+        role: "user",
+        content: {
+          type: "tool_result",
+          toolUseId: "call-1",
+          content: [],
+          structuredContent: 3,
+        },
+      },
+    };
+    conforms("UpdateTaskResult", await lifecycle.updateTask(taskId, answers));
+    await expect(parked).resolves.toEqual(answers);
+    conformsAsGetResult(await lifecycle.getTask(taskId));
+    await lifecycle.close();
+  });
+
   it("projects completed with its result", async () => {
     const lifecycle = engine();
     const { taskId } = await lifecycle.createTask();
@@ -666,9 +720,10 @@ function engineAcceptsResponse(request: InputRequest, response: unknown) {
 }
 
 describe("runtime input validation agrees with the stable definitions", () => {
-  // The engine's validator (src/input.ts) predates the stable schema and
-  // follows @modelcontextprotocol/sdk@1.30.0. These are the shapes on which
-  // the two agree; the divergences are pinned separately below.
+  // The engine's validator (src/input.ts) predates the stable schema and was
+  // written from @modelcontextprotocol/sdk@1.30.0. These are the shapes on
+  // which it and 2026-07-28 agree; the divergences are pinned separately
+  // below.
   it.each<[string, unknown, boolean]>([
     ["a minimal roots request", { method: "roots/list" }, true],
     ["a sampling request", SAMPLING, true],
@@ -708,6 +763,41 @@ describe("runtime input validation agrees with the stable definitions", () => {
       false,
     ],
     [
+      "elicitation in url mode, 2026-07-28 shape",
+      elicit({ message: "Sign in", mode: "url", url: "https://example.test" }),
+      true,
+    ],
+    [
+      "elicitation in url mode, still carrying a 2025-11-25 elicitationId",
+      elicit({
+        message: "Sign in",
+        mode: "url",
+        elicitationId: "id",
+        url: "https://example.test",
+      }),
+      true,
+    ],
+    [
+      "a sampling tool whose outputSchema is a boolean schema",
+      sampling({
+        messages: [{ role: "user", content: TEXT }],
+        maxTokens: 1,
+        tools: [
+          { name: "t", inputSchema: { type: "object" }, outputSchema: true },
+        ],
+      }),
+      false,
+    ],
+    [
+      "a sampling tool whose inputSchema is not object-rooted",
+      sampling({
+        messages: [{ role: "user", content: TEXT }],
+        maxTokens: 1,
+        tools: [{ name: "t", inputSchema: { type: "string" } }],
+      }),
+      false,
+    ],
+    [
       "elicitation in an unknown mode",
       elicit({ message: "?", mode: "x" }),
       false,
@@ -733,6 +823,42 @@ describe("runtime input validation agrees with the stable definitions", () => {
       "nested elicitation content",
       ELICIT,
       { action: "accept", content: { a: { b: 1 } } },
+      false,
+    ],
+    ...(
+      [
+        ["an object", { celsius: 22 }],
+        ["an array", []],
+        ["a string", "22C"],
+        ["a number", 22],
+        ["null", null],
+      ] as const
+    ).map(
+      ([name, structuredContent]) =>
+        [
+          `tool_result structuredContent as ${name}`,
+          SAMPLING,
+          {
+            model: "m",
+            role: "assistant",
+            content: {
+              type: "tool_result",
+              toolUseId: "call-1",
+              content: [],
+              structuredContent,
+            },
+          },
+          true,
+        ] as [string, InputRequest, unknown, boolean],
+    ),
+    [
+      "a tool_result with no toolUseId",
+      SAMPLING,
+      {
+        model: "m",
+        role: "assistant",
+        content: { type: "tool_result", content: [], structuredContent: {} },
+      },
       false,
     ],
   ])("response: %s", (_name, request, response, expected) => {
@@ -793,11 +919,42 @@ describe("where the generated schema is narrower than its TypeScript source", ()
   });
 });
 
-/* == 5. Known engine defects, recorded and NOT fixed ===================== */
+describe("divergences pinned for a decision, not deliberate", () => {
+  // Found while aligning the three shapes fixed in section 5 and left as they
+  // were, because changing them was outside that change's scope. Pinned so
+  // whichever way they are decided, the change is visible here
+  // (docs/contract.md#input-rounds).
+  const withTool = (tool: Record<string, unknown>) =>
+    sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
+    });
 
-// Found by validating engine output against the stable schema. Each is an
-// `it.fails`: it passes while the defect exists and turns red the moment the
-// engine is fixed, at which point it becomes a plain `it`. Fixing them is a
+  it("refuses an unknown tool execution.taskSupport (an SDK 1.30.0 field 2026-07-28 Tool does not define)", () => {
+    const request = withTool({ execution: { taskSupport: "sometimes" } });
+    expect(isInputRequest(request)).toBe(false);
+    conforms("InputRequest", request);
+  });
+
+  it("accepts a non-string `$schema` in a tool schema, which the schema rejects", () => {
+    for (const tool of [
+      { inputSchema: { type: "object", $schema: 7 } },
+      { outputSchema: { $schema: 7 } },
+    ]) {
+      const request = withTool(tool);
+      expect(isInputRequest(request)).toBe(true);
+      violates("InputRequest", request);
+    }
+  });
+});
+
+/* == 5. Engine defects found by this validation ========================= */
+
+// Found by validating engine output against the stable schema. A defect that
+// is still open is an `it.fails`: it passes while the defect exists and turns
+// red the moment the engine is fixed, at which point it becomes a plain `it`
+// with the same assertion, as the `fixed:` blocks below did. Fixing one is a
 // separate, reviewed engine change (AGENTS.md: failing test first, then ask).
 
 /**
@@ -834,26 +991,21 @@ const afterHandle = async (
   return taskId;
 };
 
-describe("KNOWN DEFECT: integer milliseconds are not enforced", () => {
-  it.fails("createTask() with a fractional ttlMs", () =>
-    neverEmitsNonConforming((l) => created(l, { ttlMs: 1.5 })),
-  );
-  it.fails("createTask() with a ttlMs beyond the safe integer range", () =>
-    neverEmitsNonConforming((l) => created(l, { ttlMs: 2 ** 53 })),
-  );
-  it.fails("createTask() with a fractional pollIntervalMs", () =>
-    neverEmitsNonConforming((l) => created(l, { pollIntervalMs: 0.5 })),
-  );
-  it.fails("progress() with a fractional ttlMs", () =>
+describe("fixed: integer milliseconds are enforced at the API", () => {
+  it("createTask() with a fractional ttlMs", () =>
+    neverEmitsNonConforming((l) => created(l, { ttlMs: 1.5 })));
+  it("createTask() with a ttlMs beyond the safe integer range", () =>
+    neverEmitsNonConforming((l) => created(l, { ttlMs: 2 ** 53 })));
+  it("createTask() with a fractional pollIntervalMs", () =>
+    neverEmitsNonConforming((l) => created(l, { pollIntervalMs: 0.5 })));
+  it("progress() with a fractional ttlMs", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress("x", { ttlMs: 2.5 })),
-    ),
-  );
-  it.fails("progress() with a fractional pollIntervalMs", () =>
+    ));
+  it("progress() with a fractional pollIntervalMs", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress("x", { pollIntervalMs: 0.5 })),
-    ),
-  );
+    ));
 });
 
 describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {
@@ -869,20 +1021,19 @@ describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {
   );
 });
 
-describe("KNOWN DEFECT: progress() does not check statusMessage at runtime", () => {
+describe("fixed: progress() checks statusMessage at runtime", () => {
   // Unreachable from typed TypeScript; reachable from JavaScript.
-  it.fails("progress() with a non-string statusMessage", () =>
+  it("progress() with a non-string statusMessage", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress(42 as unknown as string)),
-    ),
-  );
+    ));
 });
 
-describe("KNOWN DEFECT: input validation refuses 2026-07-28 shapes", () => {
-  // The engine follows the SDK 1.30.0 (2025-11-25) shapes. The stable MCP base
-  // types it must carry differ in these places, so a worker or client that
-  // follows the 2026-07-28 definitions is refused with a TypeError.
-  it.fails("accepts a URL elicitation without elicitationId", () => {
+describe("fixed: input validation accepts these 2026-07-28 shapes", () => {
+  // The engine followed the SDK 1.30.0 (2025-11-25) shapes here and refused
+  // a worker or client that follows the 2026-07-28 definitions. The three
+  // rules are now aligned with the stable MCP base types.
+  it("accepts a URL elicitation without elicitationId", () => {
     const request = elicit({
       message: "Sign in",
       mode: "url",
@@ -892,40 +1043,34 @@ describe("KNOWN DEFECT: input validation refuses 2026-07-28 shapes", () => {
     expect(isInputRequest(request)).toBe(true);
   });
 
-  it.fails(
-    "accepts a sampling tool whose outputSchema is not object-rooted",
-    () => {
-      const request = sampling({
-        messages: [{ role: "user", content: TEXT }],
-        maxTokens: 1,
-        tools: [
-          {
-            name: "t",
-            inputSchema: { type: "object" },
-            outputSchema: { type: "string" },
-          },
-        ],
-      });
-      conforms("InputRequest", request);
-      expect(isInputRequest(request)).toBe(true);
-    },
-  );
-
-  it.fails(
-    "accepts a tool_result whose structuredContent is not an object",
-    () => {
-      const response = {
-        model: "m",
-        role: "assistant",
-        content: {
-          type: "tool_result",
-          toolUseId: "call-1",
-          content: [],
-          structuredContent: [],
+  it("accepts a sampling tool whose outputSchema is not object-rooted", () => {
+    const request = sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [
+        {
+          name: "t",
+          inputSchema: { type: "object" },
+          outputSchema: { type: "string" },
         },
-      };
-      conforms("CreateMessageResult", response);
-      expect(engineAcceptsResponse(SAMPLING, response)).toBe(true);
-    },
-  );
+      ],
+    });
+    conforms("InputRequest", request);
+    expect(isInputRequest(request)).toBe(true);
+  });
+
+  it("accepts a tool_result whose structuredContent is not an object", () => {
+    const response = {
+      model: "m",
+      role: "assistant",
+      content: {
+        type: "tool_result",
+        toolUseId: "call-1",
+        content: [],
+        structuredContent: [],
+      },
+    };
+    conforms("CreateMessageResult", response);
+    expect(engineAcceptsResponse(SAMPLING, response)).toBe(true);
+  });
 });

@@ -25,7 +25,11 @@ import {
   type MutationOutcome,
 } from "./task-mutator.js";
 import { isTerminal, toCreateTaskResult, toDetailedTask } from "./wire.js";
-import { assertTtlMs } from "./validation.js";
+import {
+  assertPollIntervalMs,
+  assertStatusMessage,
+  assertTtlMs,
+} from "./validation.js";
 import { WorkerCoordinator } from "./worker-coordinator.js";
 
 const DEFAULT_TTL_MS = 3_600_000;
@@ -59,6 +63,12 @@ export class TaskLifecycle {
       options.defaultPollIntervalMs === null
         ? undefined
         : (options.defaultPollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    if (this.#defaultPollIntervalMs !== undefined) {
+      assertPollIntervalMs(
+        this.#defaultPollIntervalMs,
+        "defaultPollIntervalMs",
+      );
+    }
     this.#now = options.now ?? Date.now;
     this.#workers = new WorkerCoordinator(this.#now);
     this.#mutator = new TaskMutator({
@@ -100,6 +110,12 @@ export class TaskLifecycle {
     const pollIntervalMs = init?.pollIntervalMs ?? this.#defaultPollIntervalMs;
     const ttlMs = init?.ttlMs === undefined ? this.#defaultTtlMs : init.ttlMs;
     assertTtlMs(ttlMs, "createTask() ttlMs");
+    if (pollIntervalMs !== undefined) {
+      assertPollIntervalMs(pollIntervalMs, "createTask() pollIntervalMs");
+    }
+    if (init?.statusMessage !== undefined) {
+      assertStatusMessage(init.statusMessage, "createTask() statusMessage");
+    }
 
     const record: TaskRecord = {
       taskId: this.#generateTaskId(),

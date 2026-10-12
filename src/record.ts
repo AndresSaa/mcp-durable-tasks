@@ -32,9 +32,10 @@ export function hasExpired(record: TaskRecord, now: number): boolean {
  *
  * A plain spread cannot express this. `{ ...current, ...patch }` with
  * `inputRequests: undefined` leaves the key present holding `undefined`, and
- * `Object.keys` still reports it, so the wire projection would emit a property
- * the schema's `additionalProperties: false` rejects. Deleting is the only
- * merge that matches the intent.
+ * `Object.keys` still reports it. That is not a JSON record — `snapshot()`
+ * below refuses it, and a WAL encode would silently drop the key, so memory
+ * and replay would disagree. Deleting is the only merge that matches the
+ * intent.
  *
  * The result is frozen: a consumer that mutated a handed-out record in place
  * would corrupt the store behind the compare-and-swap, which is the class of

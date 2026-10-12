@@ -1025,6 +1025,193 @@ describe("TTL", () => {
   });
 });
 
+describe("integer milliseconds", () => {
+  // The stable schema types both hints as integers in the safe-integer range.
+  // Anything else would be stored and then emitted on every tasks/get.
+  const NOT_SAFE_INTEGERS: [string, unknown][] = [
+    ["a fraction", 1.5],
+    ["one past the safe range", Number.MAX_SAFE_INTEGER + 1],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a numeric string", "1000"],
+  ];
+
+  it.each(NOT_SAFE_INTEGERS)(
+    "createTask() refuses %s as ttlMs and stores nothing",
+    async (_name, ttlMs) => {
+      const store = new MemoryTaskStore();
+      const create = vi.spyOn(store, "create");
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      await expect(
+        engine.createTask({ ttlMs: ttlMs as number }),
+      ).rejects.toThrow(/createTask\(\) ttlMs must be null or a safe integer/);
+      expect(create).not.toHaveBeenCalled();
+      await engine.close();
+    },
+  );
+
+  it.each([...NOT_SAFE_INTEGERS, ["a negative fraction", -0.5]])(
+    "createTask() refuses %s as pollIntervalMs and stores nothing",
+    async (_name, pollIntervalMs) => {
+      const store = new MemoryTaskStore();
+      const create = vi.spyOn(store, "create");
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      await expect(
+        engine.createTask({ pollIntervalMs: pollIntervalMs as number }),
+      ).rejects.toThrow(/createTask\(\) pollIntervalMs must be a safe integer/);
+      expect(create).not.toHaveBeenCalled();
+      await engine.close();
+    },
+  );
+
+  it.each(NOT_SAFE_INTEGERS)(
+    "progress() refuses %s as ttlMs or pollIntervalMs without changing the task",
+    async (_name, value) => {
+      const { engine } = build();
+      const { taskId } = await engine.createTask({
+        ttlMs: 1000,
+        pollIntervalMs: 500,
+      });
+      const before = await engine.getTask(taskId);
+      const handle = engine.handle(taskId);
+
+      await expect(
+        handle.progress("bad", { ttlMs: value as number }),
+      ).rejects.toThrow(/progress\(\) ttlMs must be null or a safe integer/);
+      await expect(
+        handle.progress("bad", { pollIntervalMs: value as number }),
+      ).rejects.toThrow(/progress\(\) pollIntervalMs must be a safe integer/);
+      // A bad hint rejects the whole call: the message is not applied either.
+      await expect(
+        handle.progress("bad", {
+          ttlMs: 2000,
+          pollIntervalMs: value as number,
+        }),
+      ).rejects.toBeInstanceOf(TypeError);
+
+      await expect(engine.getTask(taskId)).resolves.toEqual(before);
+    },
+  );
+
+  it("accepts the boundary values of the safe-integer range", async () => {
+    const { engine } = build();
+    const created = await engine.createTask({
+      ttlMs: Number.MAX_SAFE_INTEGER,
+      pollIntervalMs: Number.MAX_SAFE_INTEGER,
+    });
+    expect(created).toMatchObject({
+      ttlMs: Number.MAX_SAFE_INTEGER,
+      pollIntervalMs: Number.MAX_SAFE_INTEGER,
+    });
+
+    // The smallest TTL is 1 ms (0 is refused separately); a zero polling hint
+    // is an integer the schema accepts, so it is not refused here.
+    const { taskId } = await engine.createTask({ ttlMs: 1, pollIntervalMs: 0 });
+    await engine.handle(taskId).progress("revised", {
+      ttlMs: Number.MAX_SAFE_INTEGER,
+      pollIntervalMs: 0,
+    });
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      ttlMs: Number.MAX_SAFE_INTEGER,
+      pollIntervalMs: 0,
+    });
+  });
+
+  it.each([
+    ["defaultTtlMs", { defaultTtlMs: 1.5 }, /defaultTtlMs must be null/],
+    [
+      "defaultTtlMs",
+      { defaultTtlMs: Number.MAX_SAFE_INTEGER + 1 },
+      /defaultTtlMs must be null/,
+    ],
+    [
+      "defaultPollIntervalMs",
+      { defaultPollIntervalMs: 0.5 },
+      /defaultPollIntervalMs must be a safe integer/,
+    ],
+    [
+      "defaultPollIntervalMs",
+      { defaultPollIntervalMs: Number.NaN },
+      /defaultPollIntervalMs must be a safe integer/,
+    ],
+  ])("the constructor refuses a non-integer %s", (_name, options, message) => {
+    expect(
+      () =>
+        new TaskLifecycle({
+          store: new MemoryTaskStore(),
+          sweepIntervalMs: null,
+          ...options,
+        }),
+    ).toThrow(message);
+  });
+});
+
+describe("statusMessage is a string at runtime", () => {
+  // Unreachable from typed TypeScript, reachable from JavaScript. Every path
+  // that writes a statusMessage refuses a non-string before the store sees it.
+  const NOT_STRINGS: [string, unknown][] = [
+    ["a number", 42],
+    ["null", null],
+    ["an object", { text: "x" }],
+    ["an array", ["x"]],
+  ];
+
+  it.each(NOT_STRINGS)(
+    "progress() refuses %s without changing the task",
+    async (_name, value) => {
+      const { engine } = build();
+      const { taskId } = await engine.createTask({ statusMessage: "queued" });
+      const before = await engine.getTask(taskId);
+      await expect(
+        engine.handle(taskId).progress(value as string),
+      ).rejects.toThrow(/progress\(\) statusMessage must be a string/);
+      await expect(engine.getTask(taskId)).resolves.toEqual(before);
+    },
+  );
+
+  it.each(NOT_STRINGS)(
+    "createTask() refuses %s and stores nothing",
+    async (_name, value) => {
+      const store = new MemoryTaskStore();
+      const create = vi.spyOn(store, "create");
+      const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+      await expect(
+        engine.createTask({ statusMessage: value as string }),
+      ).rejects.toThrow(/createTask\(\) statusMessage must be a string/);
+      expect(create).not.toHaveBeenCalled();
+      await engine.close();
+    },
+  );
+
+  it.each(NOT_STRINGS)(
+    "cancelled() refuses %s and the task stays non-terminal",
+    async (_name, value) => {
+      const { engine } = build();
+      const { taskId } = await engine.createTask();
+      await expect(
+        engine.handle(taskId).cancelled(value as string),
+      ).rejects.toThrow(/cancelled\(\) statusMessage must be a string/);
+      await expect(engine.getTask(taskId)).resolves.toMatchObject({
+        status: "working",
+      });
+    },
+  );
+
+  it("still accepts an empty string, and cancelled() without one", async () => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask({ statusMessage: "" });
+    await engine.handle(taskId).progress("");
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      statusMessage: "",
+    });
+    await engine.handle(taskId).cancelled();
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      status: "cancelled",
+      statusMessage: "",
+    });
+  });
+});
+
 describe("compare-and-swap", () => {
   it("retries a lost race and eventually lands the write", async () => {
     const inner = new MemoryTaskStore();
