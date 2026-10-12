@@ -42,8 +42,8 @@ const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 | Option                  | Type             | Default             | Meaning                                                                                                       |
 | ----------------------- | ---------------- | ------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `store`                 | `TaskStore`      | —                   | Required. Where task state lives.                                                                             |
-| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or `> 0`.                                              |
-| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it.                                                            |
+| `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or a safe integer `> 0`.                               |
+| `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it. Must be a safe integer.                                    |
 | `sweepIntervalMs`       | `number \| null` | `null`              | Automatic sweep period. The timer is `unref`'d.                                                               |
 | `now`                   | `() => number`   | `Date.now`          | Injectable clock. For tests; nothing else should pass it.                                                     |
 | `generateTaskId`        | `() => string`   | `crypto.randomUUID` | Must stay unguessable — see [Security](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md). |
@@ -79,10 +79,13 @@ would resolve.
 instant it is created, which is a task no client can ever read.
 
 Pass whole milliseconds. The stable schema types `ttlMs` and `pollIntervalMs`
-as integers within the safe-integer range, but the engine does not reject a
-fractional or larger value yet, here or in `progress()`; it would reach the
-wire and fail schema validation. This is a known defect
-([contract](contract.md#wire-contract)).
+as integers within the safe-integer range, so a fraction, `NaN`, `Infinity`, a
+non-number or a value above `Number.MAX_SAFE_INTEGER` throws `TypeError` before
+anything is stored — here, in `progress()`, and for `defaultTtlMs` /
+`defaultPollIntervalMs` in the constructor. `ttlMs` must also be greater than
+0; `pollIntervalMs: 0` is accepted. A record written before this check, with a
+non-integer hint, still opens and is served as stored until the worker revises
+it ([contract](contract.md#wire-contract)).
 
 #### `getTask(taskId)`
 
@@ -168,7 +171,7 @@ async function work(task: TaskHandle) {
 | --------------------------------- | ------------------------------------------------------------------------ |
 | `taskId`                          | The id this handle writes to                                             |
 | `signal`                          | `AbortSignal`, raised by `tasks/cancel`. Cooperative — nothing is killed |
-| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`      |
+| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`²     |
 | `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered           |
 | `complete(result)`                | Terminal. `result` must be a JSON object                                 |
 | `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
@@ -178,6 +181,10 @@ async function work(task: TaskHandle) {
 only checks that `error` is a JSON object today, so any other object reaches
 `tasks/get` and fails schema validation — a known defect
 ([contract](contract.md#wire-contract)).
+
+² Both hints follow the same rules as in `createTask()`: whole milliseconds in
+the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value
+throws `TypeError` and the whole call, message included, is not applied.
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised

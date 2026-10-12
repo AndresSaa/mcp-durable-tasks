@@ -84,7 +84,11 @@ Opening a `WalTaskStore` replays the log into an in-memory index:
    accepted — otherwise the next good record would weld onto the garbage and
    both would be lost.
 2. Entries replay in order, last write wins. Each entry carries the whole
-   record, so replay needs no merging.
+   record, so replay needs no merging. Replay checks only that a record is
+   plain JSON, never the engine's API rules: a log an older version wrote, for
+   example with a fractional `ttlMs` the engine now refuses at its API, still
+   opens with that value intact
+   ([contract](contract.md#wire-contract)).
 3. Tasks whose TTL elapsed while nothing was running are dropped rather than
    resurrected.
 

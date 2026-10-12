@@ -8,7 +8,7 @@ import type {
   TaskPatch,
   TaskRecord,
 } from "./types.js";
-import { assertTtlMs } from "./validation.js";
+import { assertPollIntervalMs, assertTtlMs } from "./validation.js";
 
 /**
  * The write side of a task, as a worker sees it.
@@ -47,6 +47,9 @@ export function createTaskHandle(
     async progress(statusMessage, patch) {
       if (patch?.ttlMs !== undefined) {
         assertTtlMs(patch.ttlMs, "progress() ttlMs");
+      }
+      if (patch?.pollIntervalMs !== undefined) {
+        assertPollIntervalMs(patch.pollIntervalMs, "progress() pollIntervalMs");
       }
       await writer.mutate(taskId, () => ({
         statusMessage,

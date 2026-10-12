@@ -10,6 +10,18 @@ either is a major version.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Breaking:** `ttlMs` and `pollIntervalMs` must now be integer milliseconds
+  within the safe-integer range, as the stable `2026-07-28` schema requires.
+  `createTask()`, `progress()` and the `defaultTtlMs` / `defaultPollIntervalMs`
+  constructor options throw `TypeError` for a fraction, `NaN`, `Infinity`, a
+  non-number or a value above `Number.MAX_SAFE_INTEGER`, and nothing is
+  written. Previously such a value was stored and every `tasks/get` for that
+  task failed schema validation. A WAL written before this change still opens
+  unchanged; a stored non-integer hint is served as is until the worker
+  revises it with `progress()`.
+
 ### Changed
 
 - Defined the gated pre-1.0 roadmap: a change emitter for the optional
@@ -64,12 +76,9 @@ either is a major version.
 ### Known issues
 
 Found by validating engine output against the stable `2026-07-28` schema.
-None is fixed in this release; each is pinned by an expected-fail test and
-described in `docs/contract.md`.
+Each remaining one is pinned by an expected-fail test and described in
+`docs/contract.md`.
 
-- `ttlMs` and `pollIntervalMs` are not required to be integers in the safe
-  range, in `createTask()` or `progress()`. A fractional or larger value
-  reaches `tasks/get`, which the schema then rejects.
 - `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
   with an integer `code` and a string `message`.
 - `progress()` does not check at runtime that `statusMessage` is a string.

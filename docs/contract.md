@@ -107,13 +107,27 @@ may still complete or fail if work wins the race.
   it would accept a leaked internal field. The projection is an allow-list,
   tested for every status against records that carry internal and unknown
   fields.
-- The stable schema types `ttlMs` and `pollIntervalMs` as integers and `error`
-  as a JSON-RPC error object (`code` integer, `message` string). The engine
-  does not enforce any of the three at its API today, so a caller that passes
-  a fractional or out-of-range value, `fail()` with an arbitrary object, or
-  (from untyped JavaScript) a non-string `statusMessage`, produces a
-  `tasks/get` result the schema rejects. Recorded as known defects
-  with expected-fail tests; not fixed yet.
+- The stable schema types `ttlMs` and `pollIntervalMs` as integer
+  milliseconds within the safe-integer range. The engine enforces that at its
+  API: `createTask()`, `progress()` and the `defaultTtlMs` /
+  `defaultPollIntervalMs` options throw `TypeError` for a fraction, a
+  non-finite or non-number value, or anything beyond
+  `Number.MAX_SAFE_INTEGER`, and nothing is written. `ttlMs` must also be
+  greater than 0; `pollIntervalMs` has no further bound, as in the schema.
+- Records already in a store are not re-validated. A log written before that
+  check existed may hold a fractional or out-of-range hint; it still opens,
+  because replay checks only that each record is plain JSON, and expiry
+  follows the stored value. Such a task's `tasks/get` carries the stored value
+  unchanged, and therefore does not conform, until the worker revises it with
+  `progress()`. Normalising it on read was rejected: it would make the wire
+  disagree with the record that expiry is computed from, and replay never
+  writes.
+- The stable schema types `error` as a JSON-RPC error object (`code` integer,
+  `message` string). The engine does not enforce that, or (from untyped
+  JavaScript) that `statusMessage` is a string, so `fail()` with an arbitrary
+  object or a non-string `statusMessage` produces a `tasks/get` result the
+  schema rejects. Recorded as known defects with expected-fail tests; not
+  fixed yet.
 - `createdAt` and `lastUpdatedAt` are ISO 8601 timestamps.
   `lastUpdatedAt >= createdAt` and never moves backwards, even if the injected
   clock does.

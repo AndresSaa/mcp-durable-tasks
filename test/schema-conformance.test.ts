@@ -834,26 +834,21 @@ const afterHandle = async (
   return taskId;
 };
 
-describe("KNOWN DEFECT: integer milliseconds are not enforced", () => {
-  it.fails("createTask() with a fractional ttlMs", () =>
-    neverEmitsNonConforming((l) => created(l, { ttlMs: 1.5 })),
-  );
-  it.fails("createTask() with a ttlMs beyond the safe integer range", () =>
-    neverEmitsNonConforming((l) => created(l, { ttlMs: 2 ** 53 })),
-  );
-  it.fails("createTask() with a fractional pollIntervalMs", () =>
-    neverEmitsNonConforming((l) => created(l, { pollIntervalMs: 0.5 })),
-  );
-  it.fails("progress() with a fractional ttlMs", () =>
+describe("fixed: integer milliseconds are enforced at the API", () => {
+  it("createTask() with a fractional ttlMs", () =>
+    neverEmitsNonConforming((l) => created(l, { ttlMs: 1.5 })));
+  it("createTask() with a ttlMs beyond the safe integer range", () =>
+    neverEmitsNonConforming((l) => created(l, { ttlMs: 2 ** 53 })));
+  it("createTask() with a fractional pollIntervalMs", () =>
+    neverEmitsNonConforming((l) => created(l, { pollIntervalMs: 0.5 })));
+  it("progress() with a fractional ttlMs", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress("x", { ttlMs: 2.5 })),
-    ),
-  );
-  it.fails("progress() with a fractional pollIntervalMs", () =>
+    ));
+  it("progress() with a fractional pollIntervalMs", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.progress("x", { pollIntervalMs: 0.5 })),
-    ),
-  );
+    ));
 });
 
 describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {

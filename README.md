@@ -224,8 +224,8 @@ A JSON object is not accepted merely because it is serialisable. Checked
 against the stable `2026-07-28` schema, they still refuse three shapes that
 revision accepts — URL elicitation without `elicitationId`, a tool
 `outputSchema` not rooted at `object`, and non-object `structuredContent` —
-and the engine does not yet enforce integer `ttlMs`/`pollIntervalMs` or a
-JSON-RPC error shape for `fail()`. These are known defects
+and the engine does not yet enforce a JSON-RPC error shape for `fail()`.
+These are known defects
 ([contract](docs/contract.md#wire-contract)), not fixed yet.
 
 | Mode                     | Process crash, `SIGKILL`, restart | Host or power loss             |
