@@ -33,6 +33,7 @@ import {
 import {
   assertPollIntervalMs,
   assertStatusMessage,
+  assertSweepIntervalMs,
   assertTtlMs,
 } from "./validation.js";
 import { WorkerCoordinator } from "./worker-coordinator.js";
@@ -58,6 +59,7 @@ export class TaskLifecycle {
   #closed = false;
 
   constructor(options: TaskLifecycleOptions) {
+    assertSweepIntervalMs(options.sweepIntervalMs);
     this.#store = options.store;
     this.#defaultTtlMs =
       options.defaultTtlMs === undefined

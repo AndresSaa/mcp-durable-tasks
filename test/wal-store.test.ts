@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -419,6 +419,38 @@ describe("compaction", () => {
       statusMessage: "x",
       version: 8,
     });
+  });
+});
+
+describe("compactEvery validation", () => {
+  // NaN makes the threshold comparison always false, so compaction silently
+  // never runs; zero or a negative value compacts after every mutation.
+  it.each([
+    ["zero", 0],
+    ["a negative count", -1],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a fraction", 2.5],
+    ["a numeric string", "10"],
+  ])(
+    "refuses %s with a TypeError before opening the log",
+    (_name, compactEvery) => {
+      const dir = freshDir();
+      expect(
+        () => new WalTaskStore({ dir, compactEvery: compactEvery as number }),
+      ).toThrow(TypeError);
+      expect(readdirSync(dir)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["1", 1],
+  ])("accepts %s", async (_name, compactEvery) => {
+    const store = open(freshDir(), { compactEvery });
+    await store.create(record());
+    await expect(store.get("t1")).resolves.toBeDefined();
   });
 });
 

@@ -433,7 +433,11 @@ export interface TaskLifecycleOptions {
   defaultTtlMs?: number | null;
   /** Default `pollIntervalMs` hint. `null` sends none. Default 1000. */
   defaultPollIntervalMs?: number | null;
-  /** How often to sweep expired tasks. `null` disables the timer. */
+  /**
+   * How often to sweep expired tasks. `null` disables the timer. Otherwise an
+   * integer number of milliseconds from 1 to 2,147,483,647; anything else
+   * throws `TypeError` from the constructor.
+   */
   sweepIntervalMs?: number | null;
   /** Injectable clock, in epoch milliseconds. Tests use it; nothing else. */
   now?: () => number;

@@ -43,6 +43,15 @@ either is a major version.
   a result the schema rejects; it now throws `TypeError` and nothing is
   written. Both blocks remain valid inside a `tool_result`'s `content`. The
   exported types already excluded them.
+- **Breaking:** the `sweepIntervalMs` option of `TaskLifecycle` and the
+  `compactEvery` option of `WalTaskStore` are now validated, and an invalid
+  value throws `TypeError` from the constructor. `sweepIntervalMs` must be
+  `null`, `undefined` or an integer from 1 to 2,147,483,647; Node used to run
+  0, a negative value, `NaN`, a non-number or a value above its timer limit
+  as a 1 ms sweep loop. `compactEvery` must be `null`, `undefined` or a safe
+  integer of at least 1, checked before the log is opened; `NaN` used to
+  disable automatic compaction silently, and 0 or a negative count compacted
+  after every mutation.
 - A stored record whose `status` is not one of the five task states is now
   reported as corrupt, like a record with a missing or misplaced payload.
   `getTask()` used to resolve `undefined` for it, and `complete()`,

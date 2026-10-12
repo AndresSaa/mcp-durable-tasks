@@ -7,6 +7,7 @@ import {
 } from "./errors.js";
 import { applyPatch, hasExpired, snapshot } from "./record.js";
 import type { TaskPatch, TaskRecord, TaskStore } from "./types.js";
+import { assertCompactEvery } from "./validation.js";
 
 /**
  * A `TaskStore` that survives the process, on top of
@@ -68,6 +69,8 @@ export interface WalTaskStoreOptions {
    * Rewrite the log once it holds this many superseded entries. Each mutation
    * appends a whole record, so a long-lived task's history is almost entirely
    * dead weight; this is what bounds it. `null` disables automatic rewriting.
+   * Otherwise a safe integer of at least 1; anything else throws `TypeError`
+   * before the log is opened.
    */
   compactEvery?: number | null;
   /**
@@ -109,6 +112,8 @@ export class WalTaskStore implements TaskStore {
   #pendingWalFailure: { readonly error: unknown } | undefined;
 
   constructor(options: WalTaskStoreOptions) {
+    // Before the log is opened, so a bad option leaves no file behind.
+    assertCompactEvery(options.compactEvery);
     this.#now = options.now ?? Date.now;
     this.#compactEvery =
       options.compactEvery === undefined

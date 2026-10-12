@@ -1417,4 +1417,40 @@ describe("the sweeper timer", () => {
     await engine.close();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  // Node coerces each of these to a 1 ms interval (with a warning for NaN
+  // and for values beyond its 32-bit timer limit), which turns housekeeping
+  // into a busy sweep loop.
+  it.each([
+    ["zero", 0],
+    ["a negative period", -5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a fraction", 1.5],
+    ["a numeric string", "50"],
+    ["a period beyond the timer limit", 2 ** 31],
+  ])("refuses %s as sweepIntervalMs and starts no timer", (_name, value) => {
+    expect(
+      () =>
+        new TaskLifecycle({
+          store: new MemoryTaskStore(),
+          sweepIntervalMs: value as number,
+        }),
+    ).toThrow(TypeError);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["1 ms", 1],
+    ["the timer limit", 2 ** 31 - 1],
+  ])("accepts %s as sweepIntervalMs", async (_name, value) => {
+    const engine = new TaskLifecycle({
+      store: new MemoryTaskStore(),
+      sweepIntervalMs: value,
+    });
+    expect(vi.getTimerCount()).toBe(value == null ? 0 : 1);
+    await engine.close();
+  });
 });
