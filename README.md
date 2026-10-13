@@ -237,8 +237,9 @@ refused shapes that `2026-07-28` allows: URL elicitation without
 `structuredContent` that is not an object. They now follow `2026-07-28`. The
 [contract](docs/contract.md#input-rounds) lists the remaining differences.
 
-One known defect remains in this area. The engine does not yet check that
-`fail()` receives a JSON-RPC error object
+`fail()` takes a JSON-RPC error object, as the schema requires: an integer
+`code` and a string `message`, with optional `data`. Anything else throws
+`TypeError` and nothing is written
 ([contract](docs/contract.md#wire-contract)).
 
 | Mode                     | Process crash, `SIGKILL`, restart | Host or power loss             |

@@ -188,6 +188,17 @@
   mover F12 a `0.5.0` y F13 a `0.6.0`. Alcance y puertas no cambian. El
   criterio viene de [ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11):
   la spec es estricta con el wire y deja al servidor cómo detener el trabajo.
+- ✅ **Problemas conocidos de esquema de `0.3.0` cerrados en `[Unreleased]`
+  (13 oct 2026), para `0.4.0`.** Las respuestas de input tras un reinicio
+  siguen abiertas, pendientes de una decisión de diseño del propietario.
+  `fail()` exige un
+  error JSON-RPC (`code` entero, `message` string, `data` opcional) y lanza
+  `TypeError` sin escribir; rechaza entrada antes aceptada. Decisión que el
+  plan no preveía: `code` entero aunque `spec.types.ts` diga `number`, porque
+  JSON-RPC 2.0 lo exige y el schema generado también; y un `error` ya
+  persistido no conforme se sirve tal cual hasta el TTL (misma regla que los
+  hints fraccionarios, pero sin posibilidad de revisarlo, porque `failed` es
+  terminal).
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

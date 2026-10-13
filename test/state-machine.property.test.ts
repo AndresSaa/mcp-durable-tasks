@@ -600,11 +600,17 @@ describe("property-based task state machine", () => {
 
                 case "finish": {
                   const payload = { value: operation.value };
+                  // fail() takes a JSON-RPC error, as the schema requires.
+                  const failure = {
+                    code: -32000,
+                    message: "failed",
+                    data: payload,
+                  };
                   const finish =
                     operation.status === "completed"
                       ? handle.complete(payload)
                       : operation.status === "failed"
-                        ? handle.fail(payload)
+                        ? handle.fail(failure)
                         : handle.cancelled(`cancelled ${operation.value}`);
 
                   if (!isVisible(model)) {
@@ -620,7 +626,7 @@ describe("property-based task state machine", () => {
                     model.inputResponses = undefined;
                     if (operation.status === "completed")
                       model.result = payload;
-                    if (operation.status === "failed") model.error = payload;
+                    if (operation.status === "failed") model.error = failure;
                     if (operation.status === "cancelled") {
                       model.statusMessage = `cancelled ${operation.value}`;
                     }

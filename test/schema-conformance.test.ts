@@ -1108,17 +1108,15 @@ describe("fixed: integer milliseconds are enforced at the API", () => {
     ));
 });
 
-describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {
-  it.fails("fail() with an object that has no code or message", () =>
+describe("fixed: fail() requires a JSON-RPC error", () => {
+  it("fail() with an object that has no code or message", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.fail({ reason: "x" })),
-    ),
-  );
-  it.fails("fail() with a fractional error code", () =>
+    ));
+  it("fail() with a fractional error code", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.fail({ code: 1.5, message: "m" })),
-    ),
-  );
+    ));
 });
 
 describe("fixed: progress() checks statusMessage at runtime", () => {

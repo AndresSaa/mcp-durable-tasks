@@ -378,7 +378,11 @@ describe("the public lifecycle surface", () => {
 describe("terminality (I2)", () => {
   it.each([
     ["complete", (h: ReturnType<TaskLifecycle["handle"]>) => h.complete({})],
-    ["fail", (h: ReturnType<TaskLifecycle["handle"]>) => h.fail({ code: -1 })],
+    [
+      "fail",
+      (h: ReturnType<TaskLifecycle["handle"]>) =>
+        h.fail({ code: -1, message: "boom" }),
+    ],
     ["cancelled", (h: ReturnType<TaskLifecycle["handle"]>) => h.cancelled()],
   ])("refuses a second terminal transition after %s", async (_name, finish) => {
     const { engine } = build();
@@ -869,7 +873,8 @@ describe("argument checking", () => {
   ] as const)("canonicalises signed zero in a %s", async (_name, method) => {
     const { engine, store } = build();
     const { taskId } = await engine.createTask();
-    const payload = { nested: { signedZero: -0 } };
+    // A valid JSON-RPC error too, so the same payload suits fail().
+    const payload = { code: -32000, message: "m", nested: { signedZero: -0 } };
 
     await engine.handle(taskId)[method](payload);
     const record = (await store.get(taskId))!;
@@ -909,6 +914,58 @@ describe("argument checking", () => {
     await expect(
       engine.handle(taskId).fail("nope" as never),
     ).rejects.toBeInstanceOf(TypeError);
+  });
+
+  // The stable schema types a failed task's `error` as a JSON-RPC error:
+  // integer `code`, string `message`, optional `data`. Anything else would be
+  // stored and then emitted on every tasks/get as a result the schema rejects.
+  it.each<[string, unknown]>([
+    ["an empty object", {}],
+    ["an object without code or message", { reason: "x" }],
+    ["a missing message", { code: -32000 }],
+    ["a missing code", { message: "boom" }],
+    ["a fractional code", { code: 1.5, message: "boom" }],
+    ["a numeric-string code", { code: "-32000", message: "boom" }],
+    ["a null code", { code: null, message: "boom" }],
+    ["a non-string message", { code: -32000, message: 42 }],
+    ["a null message", { code: -32000, message: null }],
+  ])("fail() refuses %s and stores nothing", async (_name, error) => {
+    const store = new MemoryTaskStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const before = await engine.getTask(taskId);
+    const update = vi.spyOn(store, "update");
+
+    await expect(engine.handle(taskId).fail(error as never)).rejects.toThrow(
+      /fail\(\) error must be a JSON-RPC error object with an integer code and a string message/,
+    );
+    await expect(
+      engine.handle(taskId).fail(error as never),
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(update).not.toHaveBeenCalled();
+    await expect(engine.getTask(taskId)).resolves.toEqual(before);
+    await engine.close();
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["code and message only", { code: -32603, message: "boom" }],
+    ["object data", { code: 1, message: "m", data: { attempt: 1 } }],
+    ["scalar data", { code: 0, message: "", data: "detail" }],
+    ["null data", { code: -1, message: "m", data: null }],
+    ["an extra member", { code: -32000, message: "m", retryable: false }],
+    [
+      "a code at the edge of the safe range",
+      { code: Number.MIN_SAFE_INTEGER, message: "m" },
+    ],
+  ])("fail() accepts a JSON-RPC error with %s", async (_name, error) => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask();
+    await engine.handle(taskId).fail(error as never);
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      status: "failed",
+      error,
+    });
+    await engine.close();
   });
 
   it.each([

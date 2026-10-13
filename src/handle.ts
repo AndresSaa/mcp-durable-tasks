@@ -9,6 +9,7 @@ import type {
   TaskRecord,
 } from "./types.js";
 import {
+  assertJsonRpcError,
   assertPollIntervalMs,
   assertStatusMessage,
   assertTtlMs,
@@ -105,6 +106,7 @@ export function createTaskHandle(
 
     async fail(error: JsonObject) {
       const normalized = normalizeJsonObject(error, "fail");
+      assertJsonRpcError(normalized, "fail() error");
       await writer.mutate(taskId, () => ({
         status: "failed",
         error: normalized,

@@ -467,7 +467,11 @@ export interface TaskHandle {
   /** Terminal. The result must be a JSON object, per the schema. */
   complete(result: JsonObject): Promise<void>;
 
-  /** Terminal. Carries the JSON-RPC error that ended the task. */
+  /**
+   * Terminal. Carries the JSON-RPC error that ended the task: an integer
+   * `code` and a string `message` are required, `data` is optional. Anything
+   * else throws `TypeError` and nothing is written.
+   */
   fail(error: JsonObject): Promise<void>;
 
   /**

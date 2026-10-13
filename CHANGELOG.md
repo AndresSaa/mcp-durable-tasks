@@ -10,6 +10,19 @@ either is a major version.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Breaking:** `fail()` now requires a JSON-RPC error object, as the stable
+  `2026-07-28` schema does for a failed task's `error`: an integer `code` and
+  a string `message`, with optional `data` of any JSON value. Other members
+  are still kept. A missing or non-integer `code`, or a missing or non-string
+  `message`, throws `TypeError` and nothing is written; previously any JSON
+  object was stored, and every `tasks/get` for that task then failed schema
+  validation. A WAL written before this change still opens unchanged: a
+  stored non-conforming `error` is served as is until the task expires, since
+  a failed task cannot be written again. The parameter type is unchanged.
+  Listed as a known issue in `0.3.0`.
+
 ## [0.3.0] - 2026-10-13
 
 A hardening release: it closes the engine and conformance-kit findings of an
@@ -170,8 +183,6 @@ Found by validating engine output against the stable `2026-07-28` schema.
 Each is pinned by a test in `test/schema-conformance.test.ts` and described in
 `docs/contract.md`.
 
-- `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
-  with an integer `code` and a string `message` (expected-fail tests).
 - Input validation accepts a non-string `$schema` inside a sampling tool's
   `inputSchema` or `outputSchema`, which the schema rejects, so such a request
   reaches `tasks/get` non-conforming. It also still refuses an

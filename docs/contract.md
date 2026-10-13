@@ -129,14 +129,22 @@ may still complete or fail if work wins the race.
   unchanged, and therefore does not conform, until the worker revises it with
   `progress()`. Normalising it on read was rejected: it would make the wire
   disagree with the record that expiry is computed from, and replay never
-  writes.
+  writes. The same holds for a failed task's `error` written before `fail()`
+  required a JSON-RPC error, except that no write can revise it.
 - `statusMessage` must be a string. TypeScript already requires it; at
   runtime, for untyped JavaScript callers, `createTask()`, `progress()` and
   `cancelled()` throw `TypeError` for anything else, and nothing is written.
-- The stable schema types `error` as a JSON-RPC error object (`code` integer,
-  `message` string). The engine does not enforce that, so `fail()` with an
-  arbitrary object produces a `tasks/get` result the schema rejects. Recorded
-  as a known defect with expected-fail tests; not fixed yet.
+- The stable schema types a failed task's `error` as a JSON-RPC error object:
+  an integer `code` and a string `message` are required, `data` is optional
+  and may be any JSON value, and further members are allowed because the
+  schema is open. `fail()` enforces the two required members and throws
+  `TypeError` otherwise, after the plain-JSON check and before anything is
+  written. The code must be an integer although `spec.types.ts` declares
+  `code: number`: JSON-RPC 2.0 itself requires an integer, and the generated
+  schema says so too. Records already stored with any other `error` follow
+  the rule for stored records below; because a failed task is terminal,
+  nothing can revise such an error, and it is served unchanged until the
+  task's TTL elapses.
 - `createdAt` and `lastUpdatedAt` are ISO 8601 timestamps.
   `lastUpdatedAt >= createdAt` and never moves backwards, even if the injected
   clock does.

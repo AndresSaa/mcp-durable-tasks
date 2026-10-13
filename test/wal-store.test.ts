@@ -6,6 +6,7 @@ import {
   ConcurrentUpdateError,
   DuplicateInputKeyError,
   isTaskEntryTooLargeError,
+  TaskAlreadyTerminalError,
   TaskEntryTooLargeError,
   TaskLifecycle,
 } from "../src/index.js";
@@ -181,6 +182,33 @@ describe("durability across reopen (I8)", () => {
       ttlMs: 60_000,
       pollIntervalMs: 1_000,
     });
+  });
+
+  // Before fail() required a JSON-RPC error, any JSON object was written to
+  // the log as given. Those logs must still open, with the error unchanged:
+  // replay validates JSON, never the engine's API rules. A failed task is
+  // terminal, so unlike a hint nothing can revise it; it is served as stored
+  // until its TTL elapses.
+  it("opens a log written with a non-JSON-RPC error and serves it unchanged", async () => {
+    const dir = freshDir();
+    const first = open(dir);
+    await first.create(
+      record({ status: "failed", error: { reason: "legacy", code: 1.5 } }),
+    );
+    await first.close();
+
+    const engine = new TaskLifecycle({
+      store: open(dir),
+      sweepIntervalMs: null,
+    });
+    await expect(engine.getTask("t1")).resolves.toMatchObject({
+      status: "failed",
+      error: { reason: "legacy", code: 1.5 },
+    });
+    await expect(
+      engine.handle("t1").fail({ code: 1, message: "m" }),
+    ).rejects.toBeInstanceOf(TaskAlreadyTerminalError);
+    await engine.close();
   });
 
   it("does not resurrect a task that expired while the process was down", async () => {
