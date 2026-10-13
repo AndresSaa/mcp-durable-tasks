@@ -200,7 +200,12 @@
   hints fraccionarios, pero sin posibilidad de revisarlo, porque `failed` es
   terminal). `$schema` no string en `inputSchema`/`outputSchema` de una tool
   de sampling se rechaza, como ya se hacía con `requestedSchema.$schema`;
-  también rechaza entrada antes aceptada.
+  también rechaza entrada antes aceptada. `execution` de una tool deja de
+  validarse más allá de JSON: verificado que la `Tool` de `2026-07-28` no lo
+  define (ni `schema.json` ni `spec.types.ts`, y el texto de la especificación
+  hace al servidor el único que decide la ejecución como tarea), así que el
+  schema abierto acepta cualquier valor. Es una relajación en runtime; el tipo
+  exportado pasa a `JsonValue`.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

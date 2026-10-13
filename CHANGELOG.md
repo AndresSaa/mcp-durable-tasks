@@ -30,6 +30,17 @@ either is a major version.
   used to be accepted and stored, and every `tasks/get` for the task then
   failed schema validation. The exported tool type now declares
   `$schema?: string` on both schemas. Listed as a known issue in `0.3.0`.
+- **Behaviour change:** input validation no longer checks a sampling tool's
+  `execution` beyond requiring plain JSON. The field, with its `taskSupport`
+  enum, is a `2025-11-25` (SDK 1.30.0) `Tool` member that the `2026-07-28`
+  `Tool` does not define, in neither `schema.json` nor `spec.types.ts`, and
+  the open schema accepts any value there. An `execution` that is not an
+  object, or whose `taskSupport` is outside `required`/`optional`/`forbidden`,
+  used to be refused with `TypeError`; it is now accepted and kept unchanged.
+  A relaxation: nothing accepted before is refused now. In the exported types,
+  `execution` is now a `JsonValue`, so code that reads
+  `execution.taskSupport` from a stored request must narrow it first. Listed
+  as a known issue in `0.3.0`.
 
 ## [0.3.0] - 2026-10-13
 
@@ -187,13 +198,9 @@ feature is added: the `notifications/tasks` change emitter and the
   `docs/contract.md` now state the limitation. Pinned as current behaviour,
   not a guarantee, in `test/wal-store.test.ts`.
 
-Found by validating engine output against the stable `2026-07-28` schema.
-Each is pinned by a test in `test/schema-conformance.test.ts` and described in
-`docs/contract.md`.
-
-- Input validation still refuses an `execution.taskSupport` value outside the
-  SDK 1.30.0 enum, a field the `2026-07-28` `Tool` does not define. Pinned as
-  current behaviour pending a decision.
+The three schema-conformance issues this release listed here (`fail()`
+accepting any JSON object, a non-string tool-schema `$schema`, and the
+`execution.taskSupport` check) are fixed under `[Unreleased]`.
 
 ## [0.2.1] - 2026-08-11
 

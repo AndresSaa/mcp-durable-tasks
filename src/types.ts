@@ -136,9 +136,12 @@ interface SamplingTool {
     openWorldHint?: boolean;
   };
   icons?: readonly ContentIcon[];
-  execution?: {
-    taskSupport?: "required" | "optional" | "forbidden";
-  };
+  /**
+   * Not part of the 2026-07-28 `Tool`. Kept so code written against the
+   * 2025-11-25 shape (`{ taskSupport?: "required" | "optional" | "forbidden" }`)
+   * still compiles; any JSON value is accepted and carried unchanged.
+   */
+  execution?: JsonValue;
   _meta?: JsonObject;
 }
 

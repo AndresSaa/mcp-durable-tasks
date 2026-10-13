@@ -235,12 +235,12 @@ const answers = await task.requestInput({
 - **Validation was written from the SDK source at version 1.30.0** and is
   checked against the stable `2026-07-28` definitions: integer `maxTokens`,
   Base64 binary blocks, an object-rooted tool `inputSchema`, a string
-  `$schema` wherever a schema carries one, `execution.taskSupport`, `file://`
-  roots, and a URL-valid `url` for URL
-  elicitation. Following `2026-07-28`, URL elicitation does not need an
-  `elicitationId` (one that is present is kept), a tool `outputSchema` may be
-  any JSON Schema object, and a tool result's `structuredContent` may be any
-  JSON value. A sampling message, and the sampling result that answers it,
+  `$schema` wherever a schema carries one, `file://` roots, and a URL-valid
+  `url` for URL elicitation. Following `2026-07-28`, URL elicitation does not
+  need an `elicitationId` (one that is present is kept), a tool `outputSchema`
+  may be any JSON Schema object, a tool result's `structuredContent` may be
+  any JSON value, and a tool's `execution`, which that revision does not
+  define, may be any JSON value and is kept unchanged. A sampling message, and the sampling result that answers it,
   carry only text, image, audio, `tool_use` and `tool_result` blocks; resource
   links and embedded resources are accepted only inside a `tool_result`'s
   `content`. The remaining differences from the schema are listed in the

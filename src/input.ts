@@ -271,20 +271,9 @@ function isSamplingTool(value: unknown): boolean {
       "icons",
       (entry) => Array.isArray(entry) && entry.every(isIcon),
     ) &&
-    isOptional(
-      value,
-      "execution",
-      (entry) =>
-        isObject(entry) &&
-        isOptional(
-          entry,
-          "taskSupport",
-          (support) =>
-            support === "required" ||
-            support === "optional" ||
-            support === "forbidden",
-        ),
-    ) &&
+    // No rule for `execution`: it is a 2025-11-25 field that the 2026-07-28
+    // Tool does not define, so like any other unlisted member it is accepted
+    // as whatever JSON value it holds (the caller checked the whole tree).
     isOptional(value, "_meta", isObject)
   );
 }

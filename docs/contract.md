@@ -179,7 +179,7 @@ every client that polls, and an accepted response resumes the worker, so an
 invalid shape would become an unfulfillable task or a malformed worker input
 that outlives the request that carried it; and the main entry point cannot
 depend on an SDK to delegate to. What the check must not do is refuse a shape
-the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
+the targeted revision defines. Four SDK 1.30.0 rules did, and now follow the
 `2026-07-28` base types (`spec.types.ts`) instead:
 
 - URL elicitation needs only `message`, `mode: "url"` and a URL. The
@@ -189,8 +189,16 @@ the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
   `inputSchema` must be rooted at `type: "object"`, as before.
 - A tool result's `structuredContent` may be any JSON value, not only an
   object.
+- A sampling tool's `execution` is not checked beyond being JSON. The
+  `2026-07-28` `Tool` defines no `execution` member (`schema.json` and
+  `spec.types.ts` both lack it, and the specification makes the server the
+  sole decider of task augmentation per request), so the open schema accepts
+  any value there. The engine used to refuse an `execution` that was not an
+  object, or whose `taskSupport` was outside the `2025-11-25` values
+  `required`/`optional`/`forbidden`; it now keeps whatever JSON value is
+  present, unchanged.
 
-Each of the three is a relaxation: everything accepted before is still
+Each of the four is a relaxation: everything accepted before is still
 accepted. One rule went the other way, because the check was wider than the
 revision. A sampling message's `content`, and a `CreateMessageResult`'s
 `content`, are `SamplingMessageContentBlock`s: text, image, audio, `tool_use`
@@ -218,10 +226,6 @@ With these aligned, the check and the snapshot agree except in these places:
   (multi-select fields). A fractional value in one of those limits therefore
   reaches `tasks/get` and fails the generated schema; it does not fail the
   TypeScript definition that upstream declares authoritative.
-- Found while aligning the three rules above and left for a decision, pinned
-  in the same test file: the engine refuses a tool `execution.taskSupport`
-  outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the
-  `2026-07-28` `Tool` does not define and the open schema therefore accepts.
 
 The round-trip rules are:
 

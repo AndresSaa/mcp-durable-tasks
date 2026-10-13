@@ -1019,25 +1019,6 @@ describe("where the generated schema is narrower than its TypeScript source", ()
   });
 });
 
-describe("divergences pinned for a decision, not deliberate", () => {
-  // Found while aligning the three shapes fixed in section 5 and left as they
-  // were, because changing them was outside that change's scope. Pinned so
-  // whichever way they are decided, the change is visible here
-  // (docs/contract.md#input-rounds).
-  const withTool = (tool: Record<string, unknown>) =>
-    sampling({
-      messages: [{ role: "user", content: TEXT }],
-      maxTokens: 1,
-      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
-    });
-
-  it("refuses an unknown tool execution.taskSupport (an SDK 1.30.0 field 2026-07-28 Tool does not define)", () => {
-    const request = withTool({ execution: { taskSupport: "sometimes" } });
-    expect(isInputRequest(request)).toBe(false);
-    conforms("InputRequest", request);
-  });
-});
-
 /* == 5. Engine defects found by this validation ========================= */
 
 // Found by validating engine output against the stable schema. A defect that
@@ -1253,6 +1234,65 @@ describe("fixed: a sampling tool's schema `$schema` must be a string", () => {
     expect(view.status).toBe("working");
     conformsAsGetResult(view);
     await lifecycle.close();
+  });
+});
+
+describe("fixed: a sampling tool's `execution` is not validated beyond JSON", () => {
+  // `execution.taskSupport` is a 2025-11-25 (SDK 1.30.0) Tool field. The
+  // 2026-07-28 Tool defines no `execution` member, in neither schema.json nor
+  // spec.types.ts, and the extension specification makes the server the sole
+  // decider of task augmentation per request. The open schema accepts any
+  // value there, so the engine must not refuse one.
+  const withTool = (tool: Record<string, unknown>) =>
+    sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
+    });
+
+  it("the 2026-07-28 Tool does not define it", () => {
+    expect(defs.Tool!.properties).not.toHaveProperty("execution");
+    expect(fixture("spec.types.ts")).not.toMatch(/taskSupport|execution\?:/);
+  });
+
+  it.each<[string, unknown]>([
+    ["an SDK 1.30.0 value", { taskSupport: "optional" }],
+    ["an unknown taskSupport", { taskSupport: "sometimes" }],
+    ["a non-string taskSupport", { taskSupport: 1 }],
+    ["other members", { mode: "background", nested: { a: [1] } }],
+    ["a string", "deferred"],
+    ["an array", ["x"]],
+    ["null", null],
+  ])("accepts %s, as the open schema does", (_name, execution) => {
+    const request = withTool({ execution });
+    expect(isInputRequest(request)).toBe(true);
+    conforms("InputRequest", request);
+  });
+
+  it("keeps it unchanged on the stored request", async () => {
+    const lifecycle = engine();
+    const { taskId } = await lifecycle.createTask();
+    const execution = { taskSupport: "sometimes", extra: [1, "two"] };
+    const parked = lifecycle
+      .handle(taskId)
+      .requestInput({ k: withTool({ execution }) as InputRequest });
+    void parked.catch(() => undefined);
+    const view = await untilParked(lifecycle, taskId);
+    conformsAsGetResult(view);
+    const stored = (
+      view as unknown as {
+        inputRequests: {
+          k: { params: { tools: { execution: unknown }[] } };
+        };
+      }
+    ).inputRequests.k.params.tools[0]!.execution;
+    expect(stored).toEqual(execution);
+    await lifecycle.close();
+  });
+
+  it("still refuses a value that is not JSON", () => {
+    const request = withTool({ execution: { taskSupport: () => "optional" } });
+    expect(isInputRequest(request)).toBe(false);
   });
 });
 
