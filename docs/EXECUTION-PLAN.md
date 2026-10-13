@@ -687,7 +687,7 @@ La firma exacta se asienta en `api.md` antes del código.
 
 ### Puerta de readiness de F12
 
-1. A7 respondida upstream (¿se reemiten notificaciones perdidas tras un crash o
+1. A7 respondida upstream (seguimiento en ext-tasks#24; ¿se reemiten notificaciones perdidas tras un crash o
    una desconexión, o el poll es siempre la autoridad?) **o** una decisión
    explícita del paquete registrada en `contract.md`.
 2. Releer spec estable, schema y SDK instalado; los fixtures ya deben estar
