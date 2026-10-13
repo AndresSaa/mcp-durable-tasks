@@ -1036,17 +1036,6 @@ describe("divergences pinned for a decision, not deliberate", () => {
     expect(isInputRequest(request)).toBe(false);
     conforms("InputRequest", request);
   });
-
-  it("accepts a non-string `$schema` in a tool schema, which the schema rejects", () => {
-    for (const tool of [
-      { inputSchema: { type: "object", $schema: 7 } },
-      { outputSchema: { $schema: 7 } },
-    ]) {
-      const request = withTool(tool);
-      expect(isInputRequest(request)).toBe(true);
-      violates("InputRequest", request);
-    }
-  });
 });
 
 /* == 5. Engine defects found by this validation ========================= */
@@ -1205,6 +1194,65 @@ describe("fixed: a form elicitation's requestedSchema.$schema must be a string",
       expect(isInputRequest(request)).toBe(true);
       conforms("InputRequest", request);
     }
+  });
+});
+
+describe("fixed: a sampling tool's schema `$schema` must be a string", () => {
+  // Both the generated schema and spec.types.ts (`$schema?: string` on
+  // `inputSchema` and `outputSchema`) type it as a string, like
+  // `requestedSchema.$schema` above.
+  const withTool = (tool: Record<string, unknown>) =>
+    sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
+    });
+
+  it("refuses a non-string `$schema` in a tool schema, as both definitions do", () => {
+    for (const $schema of [7, null, {}, ["x"], true]) {
+      for (const tool of [
+        { inputSchema: { type: "object", $schema } },
+        { outputSchema: { $schema } },
+      ]) {
+        const request = withTool(tool);
+        expect(isInputRequest(request)).toBe(false);
+        violates("InputRequest", request);
+      }
+    }
+    expect(fixture("spec.types.ts")).toContain(
+      'inputSchema: { $schema?: string; type: "object"; [key: string]: unknown };',
+    );
+    expect(fixture("spec.types.ts")).toContain(
+      "outputSchema?: { $schema?: string; [key: string]: unknown };",
+    );
+  });
+
+  it("still accepts a string `$schema`, and one that is absent", () => {
+    const draft = "https://json-schema.org/draft/2020-12/schema";
+    for (const tool of [
+      { inputSchema: { type: "object", $schema: draft } },
+      { outputSchema: { $schema: draft, type: "string" } },
+      { outputSchema: { type: "object" } },
+    ]) {
+      const request = withTool(tool);
+      expect(isInputRequest(request)).toBe(true);
+      conforms("InputRequest", request);
+    }
+  });
+
+  it("requestInput() refuses it and leaves the task working", async () => {
+    const lifecycle = engine();
+    const { taskId } = await lifecycle.createTask();
+    const request = withTool({
+      inputSchema: { type: "object", $schema: 7 },
+    }) as InputRequest;
+    await expect(
+      lifecycle.handle(taskId).requestInput({ k: request }),
+    ).rejects.toBeInstanceOf(TypeError);
+    const view = await lifecycle.getTask(taskId);
+    expect(view.status).toBe("working");
+    conformsAsGetResult(view);
+    await lifecycle.close();
   });
 });
 

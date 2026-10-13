@@ -198,7 +198,9 @@
   JSON-RPC 2.0 lo exige y el schema generado también; y un `error` ya
   persistido no conforme se sirve tal cual hasta el TTL (misma regla que los
   hints fraccionarios, pero sin posibilidad de revisarlo, porque `failed` es
-  terminal).
+  terminal). `$schema` no string en `inputSchema`/`outputSchema` de una tool
+  de sampling se rechaza, como ya se hacía con `requestedSchema.$schema`;
+  también rechaza entrada antes aceptada.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en

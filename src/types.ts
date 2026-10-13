@@ -125,9 +125,9 @@ interface SamplingTool {
   name: string;
   title?: string;
   description?: string;
-  inputSchema: JsonObject & { type: "object" };
+  inputSchema: JsonObject & { type: "object"; $schema?: string };
   /** Any JSON Schema object; 2026-07-28 does not require an `object` root. */
-  outputSchema?: JsonObject;
+  outputSchema?: JsonObject & { $schema?: string };
   annotations?: {
     title?: string;
     readOnlyHint?: boolean;

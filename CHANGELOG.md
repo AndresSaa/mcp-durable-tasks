@@ -22,6 +22,14 @@ either is a major version.
   stored non-conforming `error` is served as is until the task expires, since
   a failed task cannot be written again. The parameter type is unchanged.
   Listed as a known issue in `0.3.0`.
+- **Breaking:** a sampling tool whose `inputSchema.$schema` or
+  `outputSchema.$schema` is present but not a string is now refused by
+  `requestInput()` with `TypeError`, and nothing is written. Both the stable
+  schema and its TypeScript source type it as a string, as for a form
+  elicitation's `requestedSchema.$schema`, which `0.3.0` already checks. It
+  used to be accepted and stored, and every `tasks/get` for the task then
+  failed schema validation. The exported tool type now declares
+  `$schema?: string` on both schemas. Listed as a known issue in `0.3.0`.
 
 ## [0.3.0] - 2026-10-13
 
@@ -183,12 +191,9 @@ Found by validating engine output against the stable `2026-07-28` schema.
 Each is pinned by a test in `test/schema-conformance.test.ts` and described in
 `docs/contract.md`.
 
-- Input validation accepts a non-string `$schema` inside a sampling tool's
-  `inputSchema` or `outputSchema`, which the schema rejects, so such a request
-  reaches `tasks/get` non-conforming. It also still refuses an
-  `execution.taskSupport` value outside the SDK 1.30.0 enum, a field the
-  `2026-07-28` `Tool` does not define. Both are pinned as current behaviour
-  pending a decision.
+- Input validation still refuses an `execution.taskSupport` value outside the
+  SDK 1.30.0 enum, a field the `2026-07-28` `Tool` does not define. Pinned as
+  current behaviour pending a decision.
 
 ## [0.2.1] - 2026-08-11
 

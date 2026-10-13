@@ -200,9 +200,11 @@ tool result's `content`, which is MCP's wider `ContentBlock`. Such a request
 parked the task and made every `tasks/get` non-conforming, and such a result
 resumed the worker. Both are now refused with `TypeError`; inside a
 `tool_result`, `content` still accepts the full `ContentBlock` set. Likewise,
-a form elicitation's `requestedSchema.$schema`, which both `schema.json` and
-`spec.types.ts` type as a string, is refused when present with any other
-type.
+a form elicitation's `requestedSchema.$schema`, and the `$schema` of a
+sampling tool's `inputSchema` or `outputSchema`, which both `schema.json` and
+`spec.types.ts` type as a string, are refused when present with any other
+type. A tool schema's non-string `$schema` used to be accepted and stored, and
+every `tasks/get` for the task then failed schema validation.
 
 With these aligned, the check and the snapshot agree except in these places:
 
@@ -219,10 +221,7 @@ With these aligned, the check and the snapshot agree except in these places:
 - Found while aligning the three rules above and left for a decision, pinned
   in the same test file: the engine refuses a tool `execution.taskSupport`
   outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the
-  `2026-07-28` `Tool` does not define and the open schema therefore accepts;
-  and it accepts a non-string `$schema` inside a tool's `inputSchema` or
-  `outputSchema`, which the schema rejects. The second one lets a
-  non-conforming request reach `tasks/get`.
+  `2026-07-28` `Tool` does not define and the open schema therefore accepts.
 
 The round-trip rules are:
 

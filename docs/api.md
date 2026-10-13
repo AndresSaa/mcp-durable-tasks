@@ -234,8 +234,9 @@ const answers = await task.requestInput({
   before the task moves.
 - **Validation was written from the SDK source at version 1.30.0** and is
   checked against the stable `2026-07-28` definitions: integer `maxTokens`,
-  Base64 binary blocks, an object-rooted tool `inputSchema`,
-  `execution.taskSupport`, `file://` roots, and a URL-valid `url` for URL
+  Base64 binary blocks, an object-rooted tool `inputSchema`, a string
+  `$schema` wherever a schema carries one, `execution.taskSupport`, `file://`
+  roots, and a URL-valid `url` for URL
   elicitation. Following `2026-07-28`, URL elicitation does not need an
   `elicitationId` (one that is present is kept), a tool `outputSchema` may be
   any JSON Schema object, and a tool result's `structuredContent` may be any
