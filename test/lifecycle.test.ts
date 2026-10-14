@@ -100,6 +100,12 @@ class GatedStore implements TaskStore {
   readonly inner = new MemoryTaskStore();
   #getGate: Promise<void> | undefined;
   #updateGate: Promise<void> | undefined;
+  #updateFailure: Error | undefined;
+
+  /** The next update throws this error and writes nothing. */
+  failNextUpdate(error: Error): void {
+    this.#updateFailure = error;
+  }
 
   holdNextGet(): () => void {
     let release!: () => void;
@@ -126,6 +132,9 @@ class GatedStore implements TaskStore {
   }
 
   async update(taskId: string, patch: TaskPatch, expectedVersion: number) {
+    const failure = this.#updateFailure;
+    this.#updateFailure = undefined;
+    if (failure !== undefined) throw failure;
     const gate = this.#updateGate;
     this.#updateGate = undefined;
     const committed = await this.inner.update(taskId, patch, expectedVersion);
@@ -1240,6 +1249,138 @@ describe("input responses that arrive with no worker", () => {
     );
     await engine.close();
   });
+});
+
+describe("claims racing other writes", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+  });
+  afterEach(() => {
+    process.off("unhandledRejection", onUnhandled);
+  });
+
+  async function keptRound() {
+    const store = new MemoryTaskStore();
+    const stamp = new Date().toISOString();
+    await store.create({
+      taskId: "t",
+      status: "input_required",
+      createdAt: stamp,
+      lastUpdatedAt: stamp,
+      ttlMs: null,
+      inputRequests: { a: ROOTS },
+      inputResponses: {},
+      usedInputKeys: ["a"],
+      version: 1,
+    });
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    await engine.updateTask("t", { a: rootsResponse() });
+    return { store, engine };
+  }
+
+  it("gives the answers to exactly one of a late waiter and resumeInput()", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const release = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    const waiter = answers.then(
+      (value) => value,
+      () => undefined,
+    );
+    await untilParked(engine, taskId);
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    const claim = engine.handle(taskId).resumeInput();
+    release();
+    const outcomes = [await waiter, await claim];
+
+    expect(outcomes.filter((outcome) => outcome !== undefined)).toEqual([
+      { a: { roots: [] } },
+    ]);
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects a late waiter whose claim fails, and keeps the answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const release = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    release();
+    await expect(answers).rejects.toBe(failure);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toEqual({
+      a: { roots: [] },
+    });
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("reports a store failure while keeping a cancelled waiter's answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    await engine.cancelTask(taskId);
+
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    release();
+    await expect(update).rejects.toBe(failure);
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it.each(["claim first", "new round first"])(
+    "keeps a claim racing a new round consistent (%s)",
+    async (order) => {
+      const { store, engine } = await keptRound();
+      const handle = engine.handle("t");
+      let claim: Promise<unknown>;
+      let next: Promise<unknown>;
+      if (order === "claim first") {
+        claim = handle.resumeInput();
+        next = engine.handle("t").requestInput({ c: ROOTS });
+      } else {
+        next = engine.handle("t").requestInput({ c: ROOTS });
+        claim = handle.resumeInput();
+      }
+      void next.catch(() => undefined);
+      const claimed = await claim;
+      await untilParked(engine, "t");
+
+      // Either the claim won and got the answers, or the new round dropped
+      // them first. Never both, and the old key stays spent either way.
+      expect([undefined, { a: { roots: [] } }]).toContainEqual(claimed);
+      const record = await store.get("t");
+      expect(record).toMatchObject({
+        status: "input_required",
+        inputRequests: { c: ROOTS },
+        usedInputKeys: ["a", "c"],
+      });
+      expect(record).not.toHaveProperty("unclaimedInputResponses");
+      await expect(handle.resumeInput()).resolves.toBeUndefined();
+      expect(unhandled).toEqual([]);
+      await engine.close();
+    },
+  );
 });
 
 describe("argument checking", () => {
