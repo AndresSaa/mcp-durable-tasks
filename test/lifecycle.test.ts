@@ -1890,6 +1890,39 @@ describe("the worker signal at TTL expiry", () => {
     await engine.close();
   });
 
+  it("keeps a live worker when the re-check read fails, and checks again later", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    const parked = handle.requestInput({ a: ROOTS });
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("extended", { ttlMs: 3_000 });
+    vi.spyOn(store, "get").mockRejectedValueOnce(new Error("ECONNRESET"));
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect((await engine.getTask(taskId)).status).toBe("input_required");
+
+    // The retry reads the extended TTL and waits for it.
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    await elapse(time, 1_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await other.close();
+    await engine.close();
+  });
+
   it("never aborts a signal whose TTL another lifecycle removed", async () => {
     const { engine, store, time } = build();
     const other = new TaskLifecycle({

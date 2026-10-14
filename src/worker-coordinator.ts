@@ -4,6 +4,11 @@ import type { InputResponses, TaskRecord } from "./types.js";
 import { MAX_TIMER_MS } from "./validation.js";
 import { isTerminal } from "./wire.js";
 
+/** The first delay before an unknown re-check is read again; it doubles. */
+export const RETRY_FIRST_MS = 1_000;
+/** The longest delay between re-check reads. */
+export const RETRY_MAX_MS = 30_000;
+
 interface Waiter {
   token: symbol;
   /** The keys of the round this waiter asked for. */
@@ -56,7 +61,8 @@ export type RecordLookup = (taskId: string) => Promise<TaskRecord | undefined>;
  * now reads as everywhere else. A signal already raised by a cancellation keeps
  * its first reason. This is cooperative and writes nothing. Another instance
  * may have revised the TTL without this one seeing it, so the expiry is first
- * confirmed with one pure read.
+ * confirmed with one pure read. While the store cannot answer that read, the
+ * task is kept and read again later, until the task ends or `close()`.
  */
 export class WorkerCoordinator {
   readonly #now: () => number;
@@ -273,38 +279,53 @@ export class WorkerCoordinator {
    * The tracked expiry has passed. One pure read (I3) decides: the task is
    * released only if the store no longer has it or its stored TTL has
    * elapsed by this clock; otherwise it is tracked again from that record.
-   * Without a lookup, or if the read fails, it is released.
+   * Without a lookup, it is released.
+   *
+   * A read that fails or throws decides nothing: the task may be alive and
+   * revised elsewhere. It is read again after a delay that doubles from
+   * `RETRY_FIRST_MS` up to `RETRY_MAX_MS`.
    */
-  #confirmExpiry(taskId: string, expiry: Expiry): void {
+  #confirmExpiry(taskId: string, expiry: Expiry, attempt = 0): void {
     const current = () =>
       !this.#closed && this.#expiries.get(taskId) === expiry;
-    const expire = () => this.#expired(taskId, new TaskNotFoundError(taskId));
+    if (!current()) return;
     if (this.#lookup === undefined) {
-      expire();
+      this.#expired(taskId, new TaskNotFoundError(taskId));
       return;
     }
+    let unknown = false;
+    const retry = () => {
+      if (unknown || !current()) return;
+      unknown = true;
+      const delay = Math.min(RETRY_FIRST_MS * 2 ** attempt, RETRY_MAX_MS);
+      this.#later(expiry, delay, () => {
+        this.#confirmExpiry(taskId, expiry, attempt + 1);
+      });
+    };
     let pending: Promise<TaskRecord | undefined>;
     try {
       pending = Promise.resolve(this.#lookup(taskId));
     } catch {
-      expire();
+      retry();
       return;
     }
-    pending.then(
-      (record) => {
-        if (!current()) return;
-        if (record === undefined || hasExpired(record, this.#now())) {
-          expire();
-          return;
-        }
-        // The record may carry the version already tracked; let it re-arm.
-        this.#clearExpiry(taskId);
-        this.observe(record);
-      },
-      () => {
-        if (current()) expire();
-      },
-    );
+    pending.then((record) => {
+      if (!current()) return;
+      if (record === undefined || hasExpired(record, this.#now())) {
+        this.#expired(taskId, new TaskNotFoundError(taskId));
+        return;
+      }
+      // The record may carry the version already tracked; let it re-arm.
+      this.#clearExpiry(taskId);
+      this.observe(record);
+    }, retry);
+  }
+
+  /** Replaces the expiry's one timer. Never keeps the process alive. */
+  #later(expiry: Expiry, ms: number, run: () => void): void {
+    if (expiry.timer !== undefined) clearTimeout(expiry.timer);
+    expiry.timer = setTimeout(run, ms);
+    expiry.timer.unref?.();
   }
 
   /**

@@ -5,7 +5,11 @@ import {
   type TaskRecord,
 } from "../src/index.js";
 import { MAX_TIMER_MS } from "../src/validation.js";
-import { WorkerCoordinator } from "../src/worker-coordinator.js";
+import {
+  RETRY_FIRST_MS,
+  RETRY_MAX_MS,
+  WorkerCoordinator,
+} from "../src/worker-coordinator.js";
 
 // Process-local bookkeeping must be bounded by the life of the tasks it
 // tracks. Sizes are read directly from the coordinator, so these tests do not
@@ -411,19 +415,150 @@ describe("a signal read before any commit", () => {
     expect(lookup).toHaveBeenCalledTimes(2);
   });
 
-  it("is released at expiry when the re-check read fails", async () => {
-    let fail = false;
-    const workers = new WorkerCoordinator(now, async (taskId) => {
-      if (fail) throw new Error("store unavailable");
-      return record(taskId, 1_000);
+  async function elapse(ms: number) {
+    current += ms;
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  /** A held signal and a parked waiter, past expiry, with a scripted store. */
+  async function expiring(
+    answer: (call: number) => Promise<TaskRecord | undefined>,
+  ) {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(record(taskId, 1_000));
+      return answer(calls);
+    });
+    const signal = workers.signalFor("t");
+    const registration = workers.register("t", ["a"]);
+    const settled = vi.fn();
+    registration.promise.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await elapse(1_000);
+    return { workers, signal, settled, calls: () => calls };
+  }
+
+  it("keeps the signal and the waiter when the re-check read fails, and retries", async () => {
+    const { workers, signal, settled, calls } = await expiring(async (call) => {
+      if (call <= 4) throw new Error("store unavailable");
+      return record("t", 1_000);
+    });
+    expect(calls()).toBe(2);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(workers.trackedTasks).toBe(1);
+
+    // Retries wait 1 s, 2 s, 4 s: the delay doubles after each failure.
+    await elapse(RETRY_FIRST_MS);
+    expect(calls()).toBe(3);
+    await elapse(2 * RETRY_FIRST_MS);
+    expect(calls()).toBe(4);
+    await elapse(4 * RETRY_FIRST_MS - 1);
+    expect(calls()).toBe(4);
+    expect(signal.aborted).toBe(false);
+    await elapse(1);
+
+    // The store answers at last, and the stored TTL has elapsed.
+    expect(calls()).toBe(5);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("caps the retry delay", async () => {
+    const { calls } = await expiring(() =>
+      Promise.reject(new Error("store unavailable")),
+    );
+    let delay = RETRY_FIRST_MS;
+    while (delay < RETRY_MAX_MS) {
+      await elapse(delay);
+      delay *= 2;
+    }
+    const before = calls();
+    await elapse(RETRY_MAX_MS);
+    await elapse(RETRY_MAX_MS);
+    expect(calls()).toBe(before + 2);
+  });
+
+  it("follows a live record once a retried read answers", async () => {
+    const { workers, signal, settled } = await expiring(async (call) => {
+      if (call === 2) throw new Error("store unavailable");
+      return { ...record("t", 60_000), version: 5 };
+    });
+    await elapse(RETRY_FIRST_MS);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await elapse(60_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("treats a read that throws synchronously like a failed one", async () => {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 2) throw new Error("store closed");
+      return Promise.resolve(record(taskId, 1_000));
     });
     const signal = workers.signalFor("t");
     await vi.advanceTimersByTimeAsync(0);
-    fail = true;
+    await elapse(1_000);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
 
-    current += 1_000;
-    await vi.advanceTimersByTimeAsync(1_000);
+    await elapse(RETRY_FIRST_MS);
     expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  const failing = () => Promise.reject(new Error("store unavailable"));
+
+  it("drops a pending retry when a newer commit is observed", async () => {
+    const { workers, signal } = await expiring(failing);
+    expect(vi.getTimerCount()).toBe(1);
+    workers.observe({ ...record("t", null), version: 2 });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("keeps the entry while the store keeps failing, until the task ends", async () => {
+    const { workers } = await expiring(failing);
+    await elapse(10 * RETRY_MAX_MS);
+    expect(workers.trackedTasks).toBe(1);
+    workers.observe({ ...record("t", 1_000), status: "failed" });
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drops a pending retry on close()", async () => {
+    const { workers, calls } = await expiring(failing);
+    workers.close(new Error("closed"));
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    await elapse(RETRY_MAX_MS);
+    expect(calls()).toBe(2);
+  });
+
+  it("keeps a cancellation's reason while the re-check read keeps failing", async () => {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, () => {
+      calls += 1;
+      return calls < 3
+        ? Promise.reject(new Error("store unavailable"))
+        : Promise.resolve(undefined);
+    });
+    const signal = workers.signalFor("t");
+    workers.abort("t", new TaskCancelled("t"), record("t", 1_000));
+    await elapse(1_000);
+    expect(workers.trackedTasks).toBe(1);
+
+    await elapse(RETRY_FIRST_MS);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
     expect(workers.trackedTasks).toBe(0);
   });
 
