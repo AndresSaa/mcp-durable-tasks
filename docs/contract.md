@@ -443,7 +443,7 @@ features to invent locally:
 | A4  | Settled  | Cancellation is eventually consistent and does not force `cancelled`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | A5  | Settled  | Input request keys are unique for the full lifetime of a task.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | A6  | Settled  | Settled upstream in the SDK, not by a host rewrite: since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), `tasks/get` and `tasks/cancel` handlers registered with an explicit schema bypass the era gate. Measured here on server 2.3.1 with the required `Mcp-Name` header: explicit-schema handlers serve all three methods; typed registration and `fallbackRequestHandler` still answer `-32601` for get and cancel. See [the compatibility profile](#typescript-sdk-v2-compatibility).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. Tracked upstream in [ext-tasks#24](https://github.com/modelcontextprotocol/ext-tasks/issues/24), which proposes that the server send a `DetailedTask` snapshot right after acknowledging `subscriptions/listen`, or that the client call `tasks/get` once after subscribing. Our position, stated there: notifications are best-effort and `tasks/get` is authoritative, and a snapshot on subscribe would need no replay log in the emitter. The answer fixes the semantics of the planned `0.4.0` change emitter.                                                                                                                                                                                                                    |
+| A7  | Open     | The stable specification lets servers push `notifications/tasks`, each carrying a complete `DetailedTask` identical to what `tasks/get` would return at that moment, and lets clients keep polling. It does not say whether notifications missed across a crash or disconnect are replayed, or whether polling is then authoritative. Tracked upstream in [ext-tasks#24](https://github.com/modelcontextprotocol/ext-tasks/issues/24), which proposes that the server send a `DetailedTask` snapshot right after acknowledging `subscriptions/listen`, or that the client call `tasks/get` once after subscribing. Our position, stated there: notifications are best-effort and `tasks/get` is authoritative, and a snapshot on subscribe would need no replay log in the emitter. The answer fixes the semantics of the planned `0.5.0` change emitter.                                                                                                                                                                                                                    |
 | A8  | Settled  | Settled upstream: [ext-tasks#14](https://github.com/modelcontextprotocol/ext-tasks/issues/14) was closed as completed, and the stable `2026-07-28` `schema.json`, now the vendored fixture, defines `InputRequest`/`InputResponse` as unions of the concrete sampling, roots and elicitation definitions and requires `resultType` on results. Checking the engine's runtime input validation against those definitions found three shapes the engine wrongly refused; they were package defects, not open protocol questions, and are fixed ([input rounds](#input-rounds)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | A9  | Settled  | The extension defines the delivery mechanism: over Streamable HTTP the client sets `Mcp-Name` to `params.taskId` on `tasks/get`, `tasks/update` and `tasks/cancel`, so intermediaries can route every request for a task to the instance holding its state. Routing on it is host infrastructure; see [process boundaries](#process-boundaries).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | A10 | Open bug | Should the SDK default an absent result discriminator to `"complete"` when the server declares the Tasks extension, silently converting a task handle into a final result? Re-measured on server and client 2.3.1: the server still stamps `"complete"` on any result without `resultType`, `tools/call` included, so a task handle that omits its discriminator reaches the client as an empty success; the client still rejects an explicit `"task"` from `tools/call`. The client alone no longer bridges an absent discriminator on `2026-07-28`; it rejects the result as invalid. The stable `2026-07-28` schema requires `resultType` and accepts it on `tasks/get`; only the pre-stable `draft` schema, vendored here until the re-pin, rejected it ([details](#generated-schema-and-the-result-discriminator)). [typescript-sdk#2637](https://github.com/modelcontextprotocol/typescript-sdk/issues/2637) was closed as a duplicate of the SDK's open Tasks-extension tracking issue ([#2189](https://github.com/modelcontextprotocol/typescript-sdk/issues/2189)). |
@@ -501,7 +501,23 @@ question without a package change.
   these cannot ship as a `0.2.x` patch, so the owner assigned them `0.3.0` on
   13 October 2026 and moved the two planned features one minor later. No new
   feature is added.
-- `0.4.0` (preferred next feature): a change emitter for
+- `0.4.0`: the known-issues release, decided on 14 October 2026. It closes the
+  four defects the `0.3.0` changelog listed: `fail()` takes only a JSON-RPC
+  error (the exported parameter type narrows with the runtime check), sampling
+  tool schemas must carry a string `$schema`, a sampling tool's `execution` is
+  no longer validated beyond JSON (`2026-07-28` does not define it), and a
+  restarted worker can claim input responses that arrived while no worker was
+  running. It also aborts a worker's `AbortSignal` when its task's TTL
+  elapses. The first two reject input that used to be accepted, and the third
+  widens an exported type, so under the pre-1.0 rule below the batch is a
+  minor; the changelog marks each change. No new protocol feature is added. The
+  maintainers' answer on
+  [ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11)
+  frames the boundary these changes follow: the spec is strict about the wire
+  and leaves how a server stops work to the server, so the engine tightens the
+  wire shapes and offers a cooperative, process-local signal, and promises
+  nothing more about stopping work.
+- `0.5.0` (preferred next feature): a change emitter for
   `notifications/tasks` on `TaskLifecycle`. After each committed change made
   through that lifecycle, it emits the same closed `DetailedTask` projection
   that `tasks/get` returns. It **emits, it does not deliver**: handling
@@ -509,15 +525,15 @@ question without a package change.
   in the host. Its replay semantics depend on A7 (tracked in
   [ext-tasks#24](https://github.com/modelcontextprotocol/ext-tasks/issues/24)), so its readiness gate is an
   A7 answer upstream or an explicit package decision recorded here. Not built.
-- `0.5.0` (preferred following feature): first-party `NodeSqliteTaskStore` on
+- `0.6.0` (preferred following feature): first-party `NodeSqliteTaskStore` on
   `mcp-durable-tasks/sqlite`, using Node's built-in `node:sqlite` (subpath
   requires Node 22.13+; the main entry point stays on Node 22). It owns a
   dedicated local file and complements `WalTaskStore` with multi-process local
   CAS; it is not a remote, hosted or application-database adapter. The
   community-store non-goal narrows in that release to this one exception.
-- The `0.4.0`/`0.5.0` assignment is delivery order, not an irrevocable version
-  reservation; it has already moved once, when `0.3.0` went to the hardening
-  release. If the emitter gate remains blocked while SQLite has a
+- The `0.5.0`/`0.6.0` assignment is delivery order, not an irrevocable version
+  reservation; it has already moved twice, when `0.3.0` went to the hardening
+  release and `0.4.0` to the known-issues release. If the emitter gate remains blocked while SQLite has a
   demonstrated need and is otherwise ready, a separate contract-only decision
   may assign SQLite to the next minor. That decision updates this contract,
   `AGENTS.md` and the execution plan before a feature worktree exists;
@@ -537,8 +553,8 @@ The roadmap previously reserved `0.3.0` for an optional
 `mcp-durable-tasks/client` task follower. That follower is **removed** from the
 roadmap, not rescheduled, and `0.3.0` was reassigned to the change emitter.
 (On 13 October 2026 a later decision gave `0.3.0` to the hardening release and
-moved the emitter to `0.4.0`, as listed above; that renumbering does not revisit
-this one.) The reasons:
+moved the emitter to `0.4.0`, and a third, on 14 October, moved it on to `0.5.0`,
+as listed above; neither renumbering revisits this one.) The reasons:
 
 - The extension maintainers now publish
   [`@modelcontextprotocol/ext-tasks`](https://www.npmjs.com/package/@modelcontextprotocol/ext-tasks)

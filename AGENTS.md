@@ -265,14 +265,15 @@ compatibility layer, `2025-11-25` task vocabulary, a CLI or dashboard,
 retries/backoff/scheduling, touching `process-wal` itself,
 transport/auth/version-negotiation (that's the SDK's job), or `mcp-ext-tasks`
 as a name. The preferred sequence is the `notifications/tasks` change emitter
-in `v0.4.0` (emit, never deliver: `subscriptions/listen` and the stream stay in
-the host), then the first-party `node:sqlite` store in `v0.5.0`; either starts
+in `v0.5.0` (emit, never deliver: `subscriptions/listen` and the stream stay in
+the host), then the first-party `node:sqlite` store in `v0.6.0`; either starts
 only through its readiness gate in the execution plan. Changing that order
 requires a prior contract-only decision, never an implicit implementation
 choice — the removal of the client follower was one, recorded in
 `docs/contract.md#decision-no-client-follower`, and giving `v0.3.0` to the
-audit-hardening release (which moved both features one minor later) was
-another, recorded in `docs/contract.md#version-contract`. Do not widen either
+audit-hardening release and `v0.4.0` to the known-issues release (each moved
+both features one minor later) were others, recorded in
+`docs/contract.md#version-contract`. Do not widen either
 exception. If you're about to propose one of these, stop and ask instead of
 resolving it yourself.
 
@@ -299,9 +300,12 @@ answers it:
   both stores + conformance kit + crash tests, first manual npm publication) →
   `0.2.x` (crash-test demo, first OIDC/provenance publication, then
   maintenance patches) → `0.3.0` (audit hardening and alignment with the
-  stable `2026-07-28` revision; breaking, no new feature) → preferred `0.4.0`
+  stable `2026-07-28` revision; breaking, no new feature) → `0.4.0` (known
+  issues: `fail()` type, sampling `$schema`/`execution`, input responses
+  after a restart, signal abort on TTL; breaking, no new protocol feature) →
+  preferred `0.5.0`
   (change emitter for `notifications/tasks`, emit-not-deliver, gated by A7) →
-  preferred `0.5.0` (first-party `node:sqlite` store; not a SQL connector
+  preferred `0.6.0` (first-party `node:sqlite` store; not a SQL connector
   family) → `1.0.0` once the open conformance questions are closed and
   `TaskStore`/`TaskLifecycle` are frozen. If the emitter remains blocked, the version contract permits a
   documented pre-worktree reassignment; never infer one from this summary.
