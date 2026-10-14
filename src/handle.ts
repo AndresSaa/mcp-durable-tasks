@@ -37,6 +37,7 @@ export interface TaskWriter {
     taskId: string,
     requests: Record<string, InputRequest>,
   ): Promise<InputResponses>;
+  resumeInput(taskId: string): Promise<InputResponses | undefined>;
 }
 
 export function createTaskHandle(
@@ -93,6 +94,10 @@ export function createTaskHandle(
       );
     },
 
+    resumeInput() {
+      return writer.resumeInput(taskId);
+    },
+
     async complete(result: JsonObject) {
       const normalized = normalizeJsonObject(result, "complete");
       await writer.mutate(taskId, () => ({
@@ -102,6 +107,7 @@ export function createTaskHandle(
         // the no-reuse rule outlives the terminal transition (I5).
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
 
@@ -113,6 +119,7 @@ export function createTaskHandle(
         error: normalized,
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
 
@@ -125,6 +132,7 @@ export function createTaskHandle(
         ...(statusMessage !== undefined && { statusMessage }),
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
   };

@@ -5,6 +5,8 @@ import { isTerminal } from "./wire.js";
 
 interface Waiter {
   token: symbol;
+  /** The keys of the round this waiter asked for. */
+  keys: ReadonlySet<string>;
   promise: Promise<InputResponses>;
   resolve: (responses: InputResponses) => void;
   reject: (error: unknown) => void;
@@ -76,7 +78,17 @@ export class WorkerCoordinator {
     return this.#controller(taskId).signal;
   }
 
-  register(taskId: string): WaitRegistration {
+  /** Whether a waiter here asked for exactly the round with these keys. */
+  awaits(taskId: string, keys: readonly string[]): boolean {
+    const waiter = this.#waiters.get(taskId);
+    return (
+      waiter !== undefined &&
+      waiter.keys.size === keys.length &&
+      keys.every((key) => waiter.keys.has(key))
+    );
+  }
+
+  register(taskId: string, keys: readonly string[]): WaitRegistration {
     if (this.#waiters.has(taskId)) {
       throw new Error(`Task ${taskId} is already awaiting input`);
     }
@@ -101,6 +113,7 @@ export class WorkerCoordinator {
     };
     const waiter: Waiter = {
       token,
+      keys: new Set(keys),
       promise,
       resolve,
       reject,
@@ -117,9 +130,14 @@ export class WorkerCoordinator {
     this.#reject(registration.taskId, registration.token, error);
   }
 
+  /**
+   * Hands a completed round to the waiter that asked for it. A waiter for a
+   * different round (one registered while its own round was still being
+   * written) is left alone: those answers are not the ones it asked for.
+   */
   resolve(taskId: string, responses: InputResponses): void {
-    const waiter = this.#take(taskId);
-    if (waiter !== undefined) waiter.resolve(structuredClone(responses));
+    if (!this.awaits(taskId, Object.keys(responses))) return;
+    this.#take(taskId)?.resolve(structuredClone(responses));
   }
 
   finish(taskId: string, error: unknown): void {

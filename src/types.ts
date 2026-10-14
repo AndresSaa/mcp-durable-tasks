@@ -306,9 +306,9 @@ export type TaskError = {
 /**
  * What a {@linkcode TaskStore} persists.
  *
- * **This is not the wire shape.** `version`, `inputResponses` and
- * `usedInputKeys` — all of which a correct store must keep — are internal and
- * must never reach a client. The stable schema is open (it sets no
+ * **This is not the wire shape.** `version`, `inputResponses`,
+ * `unclaimedInputResponses` and `usedInputKeys` — all of which a correct
+ * store must keep — are internal and must never reach a client. The stable schema is open (it sets no
  * `additionalProperties: false`) and would not reject them, so keeping them
  * off the wire is this package's own guarantee: the projection is one
  * function (`toDetailedTask`) and it is allow-list based for that reason.
@@ -329,6 +329,14 @@ export interface TaskRecord {
   readonly inputRequests?: InputRequests;
   /** Responses gathered so far for the outstanding round. Internal. */
   readonly inputResponses?: InputResponses;
+  /**
+   * The answers to a completed round that no worker in the process was
+   * waiting for, as after a restart. Internal. Present only on a `working`
+   * task, from the update that completed the round until a worker claims
+   * them with {@linkcode TaskHandle.resumeInput}, opens a new round, or the
+   * task ends. A store must persist it like every other field.
+   */
+  readonly unclaimedInputResponses?: InputResponses;
   /**
    * Every input key this task has ever issued. Internal, and it must survive
    * both the terminal transition and a store replay: the spec forbids reusing
@@ -484,6 +492,20 @@ export interface TaskHandle {
    * task parked.
    */
   requestInput(requests: Record<string, InputRequest>): Promise<InputResponses>;
+
+  /**
+   * Claims the answers to a round that was completed while no worker in this
+   * process was waiting for it, typically because the process that asked
+   * was restarted. Resolves with those responses exactly once, then with
+   * `undefined`; with `undefined` straight away when there is nothing to
+   * claim, without writing. The claim is a compare-and-swap write, so two
+   * concurrent callers cannot both receive the same answers.
+   *
+   * A restarted worker calls this before it asks again: opening a new round
+   * with `requestInput()` discards unclaimed answers, and the old keys stay
+   * spent (I5). Throws like any other write on a terminal or missing task.
+   */
+  resumeInput(): Promise<InputResponses | undefined>;
 
   /** Terminal. The result must be a JSON object, per the schema. */
   complete(result: JsonObject): Promise<void>;

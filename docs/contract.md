@@ -98,7 +98,7 @@ may still complete or fail if work wins the race.
 
 - Task creation returns `resultType: "task"`. Get, update and cancel return
   `resultType: "complete"`. These discriminators are always explicit.
-- `TaskRecord.version`, stored input responses and the lifetime key ledger are
+- `TaskRecord.version`, stored input responses (`inputResponses` and `unclaimedInputResponses`) and the lifetime key ledger are
   internal fields and never appear in `tasks/get`.
 - The wire task is a closed shape. A status-specific payload is present only in
   its matching state: `result` for `completed`, `error` for `failed`, and live
@@ -237,16 +237,13 @@ The round-trip rules are:
   release a waiter.
 - Completing, failing, cancelling, expiring or closing rejects any outstanding
   process-local waiter exactly once.
-- Responses are delivered, not retained. A round's answers are stored only
-  while the round is partial; the update that completes it clears them,
-  moves the task to `working` and hands them to the local waiter. With no
-  waiter, as after a restart, that update is still acknowledged and still
-  moves the task to `working`, and the answers are lost. Because keys are
-  lifetime-unique, a restarted worker cannot ask the same keys again; it must
-  start a new round with new keys. This is current behaviour, recorded as a
-  known limitation rather than a guarantee
-  ([durability](durability.md#what-durability-does-not-cover)); whether
-  acknowledged responses should be persisted is an open package decision.
+- The update that completes a round clears the live request and response maps and moves the task to `working`. If a waiter in this process asked for exactly that round, the answers are handed to it after the commit and nothing else is stored, as before. If none did, as after a restart, the same update also stores the answers in the internal `unclaimedInputResponses` field. Either way the acknowledgement and the wire are unchanged.
+- The status after a round completed with no worker is `working`, not `input_required`. No request is outstanding any more, and `inputRequests` carries requests that "need to be fulfilled" (schema); keeping the task parked would show clients keys they have already answered and that the server would now ignore. `working` is also what the engine reported before answers were retained, so existing flows see no change.
+- `TaskHandle.resumeInput()` claims retained answers with a compare-and-swap that removes them, so exactly one caller receives them and only after the removal is durable; later calls, and calls with nothing retained, return `undefined` without writing. The claimed keys stay in `usedInputKeys` (I5): a restarted worker continues from the answers instead of asking again.
+- Retained answers are dropped by any terminal transition and when the worker opens a new round with `requestInput()`, which means it chose not to claim them. A restarted worker therefore calls `resumeInput()` before it asks again. `progress()` keeps them.
+- A waiter is bound to the keys of the round it asked for. An update that completes an older round while a newer round's `requestInput()` is still being written does not resolve the newer waiter with the older answers; they are retained, and then dropped when the newer round opens.
+- A log written by `0.3.0` or earlier opens unchanged: it has no `unclaimedInputResponses`, so a round that such a version completed with no worker remains lost, and `resumeInput()` returns `undefined`.
+- One narrow case still loses answers: the waiter that asked for the round is rejected (by cancellation, expiry or `close()`) after the completing update decided to deliver to it but before it committed. By then the worker has been told to stop, the task is gone, or the process is shutting down.
 
 ## Store invariants
 
@@ -269,13 +266,15 @@ store implementations:
   count, never records or identifiers.
 - **I8 — Crash recovery.** After process death and reopen, `WalTaskStore`
   recovers every acknowledged live state, including terminal payloads until
-  TTL expiry. The exact host-loss boundary depends on `fsync`; see
+  TTL expiry and input responses acknowledged while no worker was waiting. The exact host-loss boundary depends on `fsync`; see
   [durability.md](durability.md).
 
 `TaskStore.update()` is compare-and-swap. It rejects a stale
 `expectedVersion`, increments the version exactly once on commit, and applies
 only enumerable own string-keyed patch properties. `undefined` deletes a field.
 CAS protects the durable record; it does not route process-local worker effects.
+
+A store persists every field of `TaskRecord`, including internal ones it has no use for, through `create()`, `update()`, `get()` and, for a durable store, reopen or replay. Since the release after `0.3.0` that includes `unclaimedInputResponses`. A store that keeps a fixed list of the fields it knew earlier silently loses answers a client already gave, which is the loss the field exists to prevent; the conformance kit checks it on update, re-read and reopen. Both included stores keep whole records and needed no change.
 
 `WalTaskStore` compaction rewrites a snapshot of all live records before
 checkpointing and compacting old entries. Records already expired by its
@@ -296,7 +295,7 @@ The durable record may be shared, but a live worker's `AbortSignal` and the
 promise returned by `requestInput()` belong to that worker process. While the
 worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance.
 After a crash, the application resumes from durable state; JavaScript
-continuations are not durable.
+continuations are not durable. Input responses that complete a round while no worker waits are part of that durable state, and a restarted worker claims them with `resumeInput()` ([input rounds](#input-rounds)).
 
 That process-local state is bounded by the task's life. A lifecycle releases
 what it holds for a task (the raised signal of a cancellation whose worker is
@@ -480,7 +479,7 @@ question without a package change.
   upstream `draft` has diverged. It is run by hand and before a tag, not in CI.
 - The conformance kit runs against both included stores and deliberately broken
   stores (undefined ignored, `null` read as delete, dropped `error`, frozen
-  `lastUpdatedAt`, dropped fields, no CAS, live references), and works with any
+  `lastUpdatedAt`, dropped fields, fields unknown to an older field list dropped on write or on replay, no CAS, live references), and works with any
   clock origin the subject declares through `now()`. Optional clock and reopen capabilities are reported as real skips,
   never false passes.
 - Crash tests use child processes, explicit IPC commit points and real

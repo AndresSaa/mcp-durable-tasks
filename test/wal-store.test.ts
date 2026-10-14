@@ -569,11 +569,10 @@ describe("the engine on top of it", () => {
     await second.close();
   });
 
-  // This pins what happens today so a change to it is deliberate and visible.
-  // It is NOT a guarantee: docs/durability.md records it as a known
-  // limitation, and persisting acknowledged responses is under evaluation.
-  // If that changes, rewrite this test rather than preserving its outcome.
-  it("CURRENT BEHAVIOUR, NOT A GUARANTEE: a reply acknowledged after a restart is not retained, and its key stays spent", async () => {
+  // A reply that completes a round while no worker in this process waits for
+  // it (after a restart) is retained until a worker claims it with
+  // resumeInput(). Up to 0.3.0 it was acknowledged and discarded.
+  it("retains a reply acknowledged after a restart until a worker claims it, and its key stays spent", async () => {
     const dir = freshDir();
     const first = new TaskLifecycle({
       store: open(dir),
@@ -601,22 +600,72 @@ describe("the engine on top of it", () => {
       second.updateTask(taskId, { k: { roots: [] } }),
     ).resolves.toEqual({ resultType: "complete" });
 
-    // ...but no worker was waiting for it, and it is not stored.
+    // ...no worker was waiting for it, so it is kept, off the wire, and the
+    // task moves to working exactly as before.
     const stored = await store.get(taskId);
-    expect(stored).toMatchObject({ status: "working", usedInputKeys: ["k"] });
+    expect(stored).toMatchObject({
+      status: "working",
+      usedInputKeys: ["k"],
+      unclaimedInputResponses: { k: { roots: [] } },
+    });
     expect(stored).not.toHaveProperty("inputResponses");
     expect(stored).not.toHaveProperty("inputRequests");
-
-    // A restarted worker cannot ask again with the same key (I5); it has to
-    // issue a new one.
-    await expect(
-      second.handle(taskId).requestInput({ k: { method: "roots/list" } }),
-    ).rejects.toBeInstanceOf(DuplicateInputKeyError);
-    const again = second
-      .handle(taskId)
-      .requestInput({ "k-2": { method: "roots/list" } });
-    void again.catch(() => undefined);
+    expect(await second.getTask(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
     await second.close();
+
+    // It survives another restart (WAL replay), and is claimed exactly once.
+    const third = new TaskLifecycle({
+      store: open(dir),
+      sweepIntervalMs: null,
+    });
+    const handle = third.handle(taskId);
+    await expect(handle.resumeInput()).resolves.toEqual({ k: { roots: [] } });
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+
+    // A restarted worker still cannot ask again with the same key (I5).
+    await expect(
+      handle.requestInput({ k: { method: "roots/list" } }),
+    ).rejects.toBeInstanceOf(DuplicateInputKeyError);
+    await third.close();
+
+    const fourth = new TaskLifecycle({
+      store: open(dir),
+      sweepIntervalMs: null,
+    });
+    await expect(fourth.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    await fourth.close();
+  });
+
+  it("opens a log written before unclaimed responses existed unchanged", async () => {
+    // A 0.3.0 log of exactly the old case: the round was completed with no
+    // worker, so the record is working and has no responses at all.
+    const dir = freshDir();
+    const legacy = {
+      taskId: "legacy",
+      status: "working",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      lastUpdatedAt: "2026-08-10T00:00:01.000Z",
+      ttlMs: null,
+      usedInputKeys: ["k"],
+      version: 2,
+    };
+    const store = open(dir);
+    await store.create(legacy as TaskRecord);
+    await store.close();
+
+    const engine = new TaskLifecycle({
+      store: open(dir),
+      sweepIntervalMs: null,
+    });
+    await expect(engine.getTask("legacy")).resolves.toMatchObject({
+      status: "working",
+    });
+    await expect(
+      engine.handle("legacy").resumeInput(),
+    ).resolves.toBeUndefined();
+    await engine.close();
   });
 
   it("makes createTask durable before it returns (I1)", async () => {

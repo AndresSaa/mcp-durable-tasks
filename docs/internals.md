@@ -22,8 +22,9 @@ pretending they might would be the sort of lie this package exists to avoid.
 ## Design decisions
 
 **The store record and the wire shape are two types.** A `TaskRecord` carries
-three fields that are not part of any task the extension defines: `version`
-for compare-and-swap, `inputResponses` for a round in progress, and
+four fields that are not part of any task the extension defines: `version`
+for compare-and-swap, `inputResponses` for a round in progress,
+`unclaimedInputResponses` for a completed round no worker was waiting for, and
 `usedInputKeys` for the lifetime key ledger. The pre-stable draft schema
 rejected them outright with `additionalProperties: false`; the stable
 `2026-07-28` schema is open and would accept them, so keeping them off the

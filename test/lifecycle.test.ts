@@ -10,6 +10,7 @@ import {
   TaskNotFoundError,
   type InputRequest,
   type TaskError,
+  type TaskHandle,
   type TaskRecord,
   type TaskStore,
 } from "../src/index.js";
@@ -864,6 +865,189 @@ describe("the inputRequests round trip", () => {
       a: { action: "accept", content: { x: ["one", "two"] } },
     });
     await parked;
+  });
+});
+
+// After a restart nothing in the new process waits on the round a dead worker
+// opened. A client reply that completes it is retained, off the wire, until a
+// worker claims it with resumeInput(); the task moves to working as before.
+describe("input responses that arrive with no worker", () => {
+  /** A task parked by a process that is gone: no waiter here. */
+  async function orphanedRound(
+    requests: Record<string, InputRequest> = { a: ROOTS, b: ROOTS },
+  ) {
+    const store = new MemoryTaskStore();
+    const stamp = new Date().toISOString();
+    await store.create({
+      taskId: "t",
+      status: "input_required",
+      createdAt: stamp,
+      lastUpdatedAt: stamp,
+      ttlMs: null,
+      inputRequests: requests,
+      inputResponses: {},
+      usedInputKeys: ["older", ...Object.keys(requests)],
+      version: 3,
+    });
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    return { store, engine, handle: engine.handle("t") };
+  }
+
+  it("retains a completing reply, moves the task to working, and keeps it off the wire", async () => {
+    const { store, engine } = await orphanedRound();
+    await expect(
+      engine.updateTask("t", { a: rootsResponse(), b: rootsResponse() }),
+    ).resolves.toEqual({ resultType: "complete" });
+
+    const record = await store.get("t");
+    expect(record).toMatchObject({
+      status: "working",
+      unclaimedInputResponses: { a: { roots: [] }, b: { roots: [] } },
+      usedInputKeys: ["older", "a", "b"],
+      version: 4,
+    });
+    expect(record).not.toHaveProperty("inputRequests");
+    expect(record).not.toHaveProperty("inputResponses");
+    const view = await engine.getTask("t");
+    expect(view.status).toBe("working");
+    expect(view).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it("retains every answer of a round completed across several partial updates", async () => {
+    const { store, engine } = await orphanedRound();
+    await engine.updateTask("t", { a: rootsResponse() });
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.updateTask("t", { b: rootsResponse(), ghost: {} });
+    expect((await store.get("t"))?.unclaimedInputResponses).toEqual({
+      a: { roots: [] },
+      b: { roots: [] },
+    });
+    await engine.close();
+  });
+
+  it("is claimed by resumeInput() exactly once", async () => {
+    const { store, engine, handle } = await orphanedRound();
+    await engine.updateTask("t", { a: rootsResponse(), b: rootsResponse() });
+
+    const claims = await Promise.all(
+      Array.from({ length: 5 }, () => engine.handle("t").resumeInput()),
+    );
+    const claimed = claims.filter((claim) => claim !== undefined);
+    expect(claimed).toEqual([{ a: { roots: [] }, b: { roots: [] } }]);
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    const record = await store.get("t");
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    expect(record).toMatchObject({ status: "working", version: 5 });
+    await engine.close();
+  });
+
+  it("returns a copy the worker may change freely", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    const claimed = (await handle.resumeInput()) as Record<
+      string,
+      { roots: unknown[] }
+    >;
+    claimed.a!.roots.push("changed");
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it("writes nothing when there is nothing to claim", async () => {
+    const { store, engine } = build();
+    const { taskId } = await engine.createTask();
+    const update = vi.spyOn(store, "update");
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(update).not.toHaveBeenCalled();
+    await engine.close();
+  });
+
+  it("keeps the live-worker path unchanged: the waiter gets the answers and nothing is retained", async () => {
+    const { store, engine } = build();
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+    const before = await store.get(taskId);
+
+    await engine.updateTask(taskId, { a: rootsResponse() });
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    const record = await store.get(taskId);
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    expect(record?.version).toBe(before!.version + 1);
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    await engine.close();
+  });
+
+  it("is cleared when the worker opens a new round, and the old keys stay spent (I5)", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+
+    await expect(handle.requestInput({ a: ROOTS })).rejects.toBeInstanceOf(
+      DuplicateInputKeyError,
+    );
+    expect((await store.get("t"))?.unclaimedInputResponses).toBeDefined();
+
+    const next = handle.requestInput({ c: ROOTS });
+    void next.catch(() => undefined);
+    await untilParked(engine, "t");
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it.each([
+    ["complete()", (h: TaskHandle) => h.complete({ ok: true })],
+    ["fail()", (h: TaskHandle) => h.fail({ code: -32000, message: "m" })],
+    ["cancelled()", (h: TaskHandle) => h.cancelled()],
+  ])("is cleared by %s", async (_name, finish) => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    await finish(handle);
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await expect(handle.resumeInput()).rejects.toBeInstanceOf(
+      TaskAlreadyTerminalError,
+    );
+    await engine.close();
+  });
+
+  it("survives progress(), which does not touch it", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    await handle.progress("restarted");
+    expect((await store.get("t"))?.unclaimedInputResponses).toEqual({
+      a: { roots: [] },
+    });
+    await engine.close();
+  });
+
+  it("throws TaskNotFoundError for a task that does not exist", async () => {
+    const { engine } = build();
+    await expect(engine.handle("nope").resumeInput()).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await engine.close();
+  });
+
+  it("never hands one round's answers to a worker waiting on a newer round", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    // The client's answer to the old round and the worker's new round race.
+    const update = engine.updateTask("t", { a: rootsResponse() });
+    const next = handle.requestInput({ c: ROOTS });
+    const settled = vi.fn();
+    next.then(settled, settled);
+    await update;
+    await untilParked(engine, "t");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(settled).not.toHaveBeenCalled();
+    expect(await store.get("t")).toMatchObject({
+      status: "input_required",
+      inputRequests: { c: ROOTS },
+    });
+    await engine.updateTask("t", { c: rootsResponse() });
+    await expect(next).resolves.toEqual({ c: { roots: [] } });
+    await engine.close();
   });
 });
 

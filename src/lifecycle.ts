@@ -150,6 +150,7 @@ export class TaskLifecycle {
       mutate: (id, change) => this.#mutate(id, change),
       signalFor: (id) => this.#workers.signalFor(id),
       requestInput: (id, requests) => this.#requestInput(id, requests),
+      resumeInput: (id) => this.#resumeInput(id),
     };
     return createTaskHandle(taskId, writer);
   }
@@ -220,13 +221,23 @@ export class TaskLifecycle {
         };
       }
 
+      // The round is complete, so the task moves to working whether or not a
+      // worker here asked for it: no request is outstanding any more. If one
+      // did, the answers go to it after the commit, exactly as before. If
+      // none did (the process that asked was restarted), they are retained
+      // off the wire until a worker claims them with resumeInput().
+      const waiting = this.#workers.awaits(
+        taskId,
+        Object.keys(record.inputRequests ?? {}),
+      );
       return {
         patch: {
           status: "working",
           inputRequests: undefined,
           inputResponses: undefined,
+          ...(!waiting && { unclaimedInputResponses: merge.responses }),
         },
-        afterCommit: merge.responses,
+        afterCommit: waiting ? merge.responses : undefined,
       };
     });
 
@@ -274,8 +285,8 @@ export class TaskLifecycle {
     taskId: string,
     requests: Record<string, InputRequest>,
   ): Promise<InputResponses> {
-    const registration = this.#workers.register(taskId);
     const keys = Object.keys(requests);
+    const registration = this.#workers.register(taskId, keys);
 
     try {
       await this.#mutate(taskId, (record) => {
@@ -288,6 +299,10 @@ export class TaskLifecycle {
           status: "input_required",
           inputRequests: structuredClone(requests) as InputRequests,
           inputResponses: {},
+          // A worker that opens a new round has chosen not to claim answers
+          // left from the last one; keeping them would let a later claim
+          // hand them out of order.
+          unclaimedInputResponses: undefined,
           usedInputKeys: [...used],
         };
       });
@@ -297,6 +312,22 @@ export class TaskLifecycle {
     }
 
     return registration.promise;
+  }
+
+  /**
+   * Claims retained answers with a compare-and-swap that removes them, so
+   * exactly one caller receives them, and only once the removal is durable.
+   */
+  async #resumeInput(taskId: string): Promise<InputResponses | undefined> {
+    const outcome = await this.#mutateWithEffect(taskId, (record) => {
+      const unclaimed = record.unclaimedInputResponses;
+      if (unclaimed === undefined) return undefined;
+      return {
+        patch: { unclaimedInputResponses: undefined },
+        afterCommit: unclaimed,
+      };
+    });
+    return outcome.changed ? structuredClone(outcome.afterCommit) : undefined;
   }
 
   /**

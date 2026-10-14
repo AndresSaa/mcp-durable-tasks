@@ -186,6 +186,7 @@ async function work(task: TaskHandle) {
 | `signal`                          | `AbortSignal`, raised by `tasks/cancel` or TTL expiry³. Cooperative  |
 | `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`² |
 | `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered       |
+| `resumeInput()`                   | Claims answers that arrived while no worker waited, exactly once     |
 | `complete(result)`                | Terminal. `result` must be a JSON object                             |
 | `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹   |
 | `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour     |
@@ -269,14 +270,25 @@ broker would turn this state engine into the queue explicitly excluded by the
 [non-goals](contract.md#non-goals). After a crash there is no promise left to
 wake — there is durable state, which is the point.
 
-That durable state does not include the answers to a round. If a task was
-`input_required` when its process died, a restarted worker must ask with
-**new** keys: re-issuing a key the dead process used throws
-`DuplicateInputKeyError`. And a client reply that answers every outstanding
-key before any worker in the new process asks is acknowledged with
-`{ resultType: "complete" }` and moves the task to `working`, but the
-responses are not stored and reach no worker. See
-[durability.md](durability.md#what-durability-does-not-cover).
+### `resumeInput()`
+
+That durable state includes the answers to a round nobody was waiting for. If a task was `input_required` when its process died, a client reply that answers every outstanding key is acknowledged with `{ resultType: "complete" }`, moves the task to `working` as before, and is kept, off the wire, until a worker claims it. A restarted worker claims it with `resumeInput()`:
+
+```ts
+async function resume(task: TaskHandle) {
+  const answers = await task.resumeInput();
+  if (answers !== undefined) return continueWith(answers);
+  // Nothing arrived yet. A reply that comes later is kept the same way, so
+  // either call resumeInput() again later or ask again with new keys.
+}
+```
+
+- It resolves with the retained responses **exactly once**. The claim is a compare-and-swap write that removes them, so concurrent callers, or another instance on a shared store, cannot both receive them, and a crash after it resolves cannot hand them out again.
+- It resolves with `undefined`, and writes nothing, when there is nothing to claim: no round was completed without a worker, the answers were already claimed, or a live waiter received them directly.
+- Like every write, it throws `TaskNotFoundError` for a missing or expired task and `TaskAlreadyTerminalError` for a finished one. A terminal transition drops unclaimed answers.
+- **Call it before `requestInput()`.** Opening a new round drops unclaimed answers, because the worker has chosen not to use them. The claimed keys stay spent: re-issuing a key the dead process used still throws `DuplicateInputKeyError` (I5).
+
+A log written by `0.3.0` or earlier opens unchanged, and a round such a version completed with no worker stays lost. See [durability.md](durability.md#what-durability-does-not-cover) and the [contract](contract.md#input-rounds).
 
 ---
 
@@ -322,11 +334,13 @@ Four rules that are easy to get wrong, and that the conformance kit checks:
    than restarting the clock; setting it to `null` makes the task unlimited
    from then on.
 
-`TaskRecord` carries three fields that are **internal and must never reach the
-wire**: `version`, `inputResponses` and `usedInputKeys`. The engine's
+`TaskRecord` carries four fields that are **internal and must never reach the
+wire**: `version`, `inputResponses`, `unclaimedInputResponses` and `usedInputKeys`. The engine's
 projection is allow-list based so they cannot leak, but a store must persist
 them faithfully — `usedInputKeys` in particular has to survive both the
 terminal transition and a replay, or key uniqueness breaks after a restart.
+
+**Persist every field, including ones you do not recognise.** `unclaimedInputResponses` was added after `0.3.0`; it holds answers a client already gave while no worker was waiting. A store that writes, reads or replays only a fixed list of the fields it knew earlier drops them, and a restarted worker never sees those answers. The conformance kit checks the field through `update()`, `get()` and `reopen()`.
 
 ---
 

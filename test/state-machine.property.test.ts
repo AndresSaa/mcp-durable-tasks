@@ -32,6 +32,7 @@ type Operation =
       value: number;
     }
   | { kind: "cancel" }
+  | { kind: "resume" }
   | { kind: "advance"; milliseconds: number }
   | { kind: "inject-conflict" }
   | { kind: "read" };
@@ -48,6 +49,7 @@ interface ReferenceModel {
   usedInputKeys: string[];
   inputRequests?: Map<string, InputRequest>;
   inputResponses?: Map<string, { roots: [] }>;
+  unclaimedInputResponses?: Record<string, { roots: [] }>;
   result?: JsonObject;
   error?: JsonObject;
   signalAborted: boolean;
@@ -163,6 +165,7 @@ const operationArbitrary: fc.Arbitrary<Operation> = fc.oneof(
     }),
   },
   { weight: 2, arbitrary: fc.constant({ kind: "cancel" as const }) },
+  { weight: 2, arbitrary: fc.constant({ kind: "resume" as const }) },
   {
     weight: 3,
     arbitrary: fc.record({
@@ -222,6 +225,9 @@ function expectedRecord(model: ReferenceModel): TaskRecord {
     }),
     ...(model.inputResponses !== undefined && {
       inputResponses: ownRecord(model.inputResponses),
+    }),
+    ...(model.unclaimedInputResponses !== undefined && {
+      unclaimedInputResponses: model.unclaimedInputResponses,
     }),
     ...(model.result !== undefined && { result: model.result }),
     ...(model.error !== undefined && { error: model.error }),
@@ -320,6 +326,7 @@ async function assertState(
   expect(view).not.toHaveProperty("version");
   expect(view).not.toHaveProperty("usedInputKeys");
   expect(view).not.toHaveProperty("inputResponses");
+  expect(view).not.toHaveProperty("unclaimedInputResponses");
 
   const expectedKeys = [
     "createdAt",
@@ -489,6 +496,8 @@ describe("property-based task state machine", () => {
                       keys.map((key) => [key, ROOTS]),
                     );
                     model.inputResponses = new Map();
+                    // Opening a round discards answers nobody claimed.
+                    model.unclaimedInputResponses = undefined;
                     model.usedInputKeys.push(...keys);
                     commit(model);
                   }
@@ -571,6 +580,10 @@ describe("property-based task state machine", () => {
                               expectedResponses,
                             );
                             activeWaiter = undefined;
+                          } else {
+                            // No worker waits here (it was cancelled away):
+                            // the answers are kept for resumeInput().
+                            model.unclaimedInputResponses = expectedResponses;
                           }
                         }
                       }
@@ -598,6 +611,26 @@ describe("property-based task state machine", () => {
                   }
                   break;
 
+                case "resume": {
+                  const resume = handle.resumeInput();
+                  if (!isVisible(model)) {
+                    await expectNamedError(resume, ["TaskNotFoundError"]);
+                  } else if (isTerminal(model.status)) {
+                    await expectNamedError(resume, [
+                      "TaskAlreadyTerminalError",
+                    ]);
+                  } else {
+                    await expect(resume).resolves.toEqual(
+                      model.unclaimedInputResponses,
+                    );
+                    if (model.unclaimedInputResponses !== undefined) {
+                      model.unclaimedInputResponses = undefined;
+                      commit(model);
+                    }
+                  }
+                  break;
+                }
+
                 case "finish": {
                   const payload = { value: operation.value };
                   // fail() takes a JSON-RPC error, as the schema requires.
@@ -624,6 +657,7 @@ describe("property-based task state machine", () => {
                     model.status = operation.status;
                     model.inputRequests = undefined;
                     model.inputResponses = undefined;
+                    model.unclaimedInputResponses = undefined;
                     if (operation.status === "completed")
                       model.result = payload;
                     if (operation.status === "failed") model.error = failure;

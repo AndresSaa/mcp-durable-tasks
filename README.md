@@ -254,6 +254,7 @@ kills them with `SIGKILL` at a known state and reopens the directory:
 - A task that was waiting for input comes back with its requests and its list of
   used keys. The restarted process still cannot reuse a key that the dead
   process issued.
+- A client reply that completes a round while no worker is running is kept, across further kills, until one restarted worker claims it with `resumeInput()`.
 - A task completed just before the kill keeps its result.
 - A progress version that was acknowledged is never lost, even if the process is
   killed during later writes.
@@ -261,11 +262,7 @@ kills them with `SIGKILL` at a known state and reopens the directory:
 
 These tests load `dist/`, so they check the package that you install.
 
-The input round itself does not survive a restart. The restarted worker has to
-ask again with new keys. If a client reply completes the old round before the
-worker does that, the reply is acknowledged but not stored, so no worker ever
-receives it
-([durability](docs/durability.md#what-durability-does-not-cover)).
+The worker's suspended `requestInput()` call does not survive a restart, but the answers do. A restarted worker calls `task.resumeInput()` first: it returns the responses that arrived while no worker was waiting, exactly once, or `undefined`. If the client has not answered yet, the reply is kept the same way when it arrives, so the worker can call `resumeInput()` again later, or ask again with new keys; the old keys stay spent ([durability](docs/durability.md#what-durability-does-not-cover)).
 
 A state-machine model built with fast-check backs these examples. Random
 schedules combine progress updates, TTL changes, clock rollbacks, partial and
@@ -378,7 +375,7 @@ your runner integration must provide `runner.skip(context, reason)`. If it does
 not, a missing optional part fails with a clear message, so you never get a
 false pass. The reopen checks run a full partial-input round. They confirm that
 the live request and response maps are cleared, and that `usedInputKeys` stays
-saved across both reopen steps.
+saved across both reopen steps. The kit also checks that `unclaimedInputResponses` is stored, re-read and replayed like every other field, so a store that keeps only a fixed list of fields fails.
 
 Every factory call, check, `close()` and `dispose()` has a 10-second limit by
 default. Change it with `timeoutMs`. A failure during cleanup counts as a failed

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   MemoryTaskStore,
@@ -602,12 +603,13 @@ function expectClosed(view: Record<string, unknown>) {
 
 describe("the wire projection is closed", () => {
   const stamp = "2026-07-28T00:00:00.000Z";
-  // Every status, each record also carrying the three internal fields a
-  // correct store keeps plus one field nobody has listed yet. The stable
-  // schema accepts all of them (see above); the projection must not.
+  // Every status, each record also carrying the internal fields a correct
+  // store keeps plus one field nobody has listed yet. The stable schema
+  // accepts all of them (see above); the projection must not.
   const internals = {
     version: 3,
     usedInputKeys: ["a"],
+    unclaimedInputResponses: { a: { roots: [] } },
     futureInternalField: "must never reach the wire",
   };
   const records: [string, Record<string, unknown>][] = [
@@ -649,6 +651,7 @@ describe("the wire projection is closed", () => {
         "version",
         "usedInputKeys",
         "inputResponses",
+        "unclaimedInputResponses",
         "futureInternalField",
       ]) {
         expect(view, key).not.toHaveProperty(key);
@@ -657,6 +660,49 @@ describe("the wire projection is closed", () => {
       await lifecycle.close();
     },
   );
+
+  // Unclaimed input responses are the one internal field that holds client
+  // data, so their absence from the wire is also checked as a property: any
+  // status, any keys (prototype names included), any number of answers.
+  it("never projects unclaimedInputResponses, for any status or content", async () => {
+    const statuses = fc.constantFrom(...records.map(([, fields]) => fields));
+    const responses = fc.dictionary(
+      fc.oneof(
+        fc.constantFrom("__proto__", "toString", "constructor"),
+        fc.string({ maxLength: 8 }),
+      ),
+      fc.constantFrom<Record<string, unknown>>(
+        { roots: [] },
+        { action: "decline" },
+        { model: "m", role: "assistant", content: { type: "text", text: "" } },
+      ),
+      { maxKeys: 4 },
+    );
+    await fc.assert(
+      fc.asyncProperty(statuses, responses, async (fields, unclaimed) => {
+        const store = new MemoryTaskStore();
+        await store.create({
+          taskId: "t",
+          createdAt: stamp,
+          lastUpdatedAt: stamp,
+          ttlMs: null,
+          version: 0,
+          unclaimedInputResponses: unclaimed,
+          ...fields,
+        } as unknown as TaskRecord);
+        const lifecycle = new TaskLifecycle({ store, sweepIntervalMs: null });
+        const view = (await lifecycle.getTask("t")) as unknown as Record<
+          string,
+          unknown
+        >;
+        expectClosed(view);
+        expect(view).not.toHaveProperty("unclaimedInputResponses");
+        expect(JSON.stringify(view)).not.toContain("unclaimedInputResponses");
+        await lifecycle.close();
+      }),
+      { numRuns: 100 },
+    );
+  });
 
   it("keeps CreateTaskResult to the base task, with no status payloads", async () => {
     const lifecycle = engine();

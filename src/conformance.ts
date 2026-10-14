@@ -288,6 +288,47 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
     },
   },
   {
+    name: "update() persists unclaimed input responses, and undefined clears them",
+    async run({ store }) {
+      // Added after 0.3.0. A store that persists only the fields it knew about
+      // before (a fixed column list, say) drops these silently, and a
+      // restarted worker then loses the answers a client already gave.
+      const record = conformanceRecord({ usedInputKeys: ["alpha"] });
+      await store.create(record);
+      const unclaimed = {
+        alpha: { action: "accept" as const, content: { ok: true } },
+      };
+      const written = await store.update(
+        record.taskId,
+        { unclaimedInputResponses: unclaimed },
+        0,
+      );
+      assertDeepEqual(
+        written.unclaimedInputResponses,
+        unclaimed,
+        "unclaimed input responses returned by update()",
+      );
+      assertDeepEqual(
+        (await store.get(record.taskId))?.unclaimedInputResponses,
+        unclaimed,
+        "unclaimed input responses after re-read",
+      );
+
+      const cleared = await store.update(
+        record.taskId,
+        { unclaimedInputResponses: undefined },
+        1,
+      );
+      const reread = await store.get(record.taskId);
+      assert(
+        !("unclaimedInputResponses" in cleared) &&
+          reread !== undefined &&
+          !("unclaimedInputResponses" in reread),
+        "unclaimed input responses survived a patch that set them to undefined",
+      );
+    },
+  },
+  {
     name: "update() rejects a stale version and changes nothing",
     async run({ store }) {
       const record = conformanceRecord();
@@ -411,6 +452,7 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
         ttlMs: null,
         inputRequests: { first: { method: "roots/list" } },
         inputResponses: { first: { roots: [] } },
+        unclaimedInputResponses: { earlier: { roots: [] } },
         usedInputKeys: ["first"],
         result: { value: 1 },
         error: { code: 1, message: "old" },
@@ -433,6 +475,7 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
         pollIntervalMs: 250,
         inputRequests: { second: { method: "roots/list" } },
         inputResponses: { second: { roots: [] } },
+        unclaimedInputResponses: { first: { roots: [] } },
         usedInputKeys: ["first", "second"],
         result: { value: 2 },
         error: { code: 2, message: "new" },
@@ -622,6 +665,41 @@ export const conformanceChecks: readonly ConformanceCheck[] = [
           !("inputRequests" in recovered) &&
           !("inputResponses" in recovered),
         "completed input round retained live request or response maps",
+      );
+    },
+  },
+  {
+    name: "unclaimed input responses survive reopen until a claim clears them",
+    needsReopen: true,
+    async run(subject) {
+      // A replay or deserialiser with a fixed field list loses them here,
+      // which is exactly the restart they exist for.
+      const record = conformanceRecord({ usedInputKeys: ["alpha"] });
+      await subject.store.create(record);
+      const retained = await subject.store.update(
+        record.taskId,
+        { unclaimedInputResponses: { alpha: { roots: [] } } },
+        0,
+      );
+
+      let store = await reopen(subject);
+      assertDeepEqual(
+        await store.get(record.taskId),
+        retained,
+        "record with unclaimed input responses after reopen",
+      );
+
+      const claimed = await store.update(
+        record.taskId,
+        { unclaimedInputResponses: undefined },
+        retained.version,
+      );
+      store = await reopen(subject);
+      const recovered = await store.get(record.taskId);
+      assertDeepEqual(recovered, claimed, "claimed record after reopen");
+      assert(
+        recovered !== undefined && !("unclaimedInputResponses" in recovered),
+        "a claimed record came back with its unclaimed input responses",
       );
     },
   },

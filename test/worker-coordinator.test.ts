@@ -124,7 +124,7 @@ describe("a cancellation with no local worker", () => {
 describe("a parked worker", () => {
   it("is rejected and released at expiry, with a single timer for the task", async () => {
     const workers = new WorkerCoordinator(now);
-    const registration = workers.register("t");
+    const registration = workers.register("t", ["a"]);
     workers.observe({
       ...record("t", 1_000),
       status: "input_required",
@@ -248,7 +248,7 @@ describe("a held signal at expiry", () => {
 
   it("rejects a parked waiter exactly once, with TaskNotFoundError, and aborts the signal", async () => {
     const workers = new WorkerCoordinator(now);
-    const registration = workers.register("t");
+    const registration = workers.register("t", ["a"]);
     const signal = workers.signalFor("t");
     workers.observe({
       ...record("t", 1_000),

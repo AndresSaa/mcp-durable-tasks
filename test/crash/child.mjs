@@ -13,7 +13,7 @@
 import { TaskLifecycle } from "../../dist/index.js";
 import { WalTaskStore } from "../../dist/wal.js";
 
-const [dir, scenario] = process.argv.slice(2);
+const [dir, scenario, existingTaskId] = process.argv.slice(2);
 
 const announce = (message) => {
   process.send?.(message);
@@ -66,6 +66,28 @@ switch (scenario) {
     }
 
     announce({ ready: true, taskId: created.taskId });
+    waitToBeKilled();
+    break;
+  }
+
+  case "answer-without-worker": {
+    // A restarted server: the task an earlier process parked is still
+    // input_required, and no worker in this process waits on it. The client's
+    // reply completes the round; the kill follows its acknowledgement.
+    const acknowledged = await engine.updateTask(existingTaskId, {
+      "round-1-roots": { roots: [] },
+      "round-1-elicit": { action: "accept", content: {} },
+    });
+    announce({ ready: true, taskId: existingTaskId, acknowledged });
+    waitToBeKilled();
+    break;
+  }
+
+  case "resume-input": {
+    // A restarted worker claims what arrived while it was gone. The kill
+    // follows the claim, so the parent can check that it was durable.
+    const claimed = await engine.handle(existingTaskId).resumeInput();
+    announce({ ready: true, taskId: existingTaskId, claimed });
     waitToBeKilled();
     break;
   }
