@@ -189,9 +189,7 @@
   criterio viene de [ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11):
   la spec es estricta con el wire y deja al servidor cómo detener el trabajo.
 - ✅ **Problemas conocidos de esquema de `0.3.0` cerrados en `[Unreleased]`
-  (13 oct 2026), para `0.4.0`.** Las respuestas de input tras un reinicio
-  siguen abiertas, pendientes de una decisión de diseño del propietario.
-  `fail()` exige un
+  (13-14 oct 2026), para `0.4.0`.** `fail()` exige un
   error JSON-RPC (`code` entero, `message` string, `data` opcional) y lanza
   `TypeError` sin escribir; rechaza entrada antes aceptada. Decisión que el
   plan no preveía: `code` entero aunque `spec.types.ts` diga `number`, porque
@@ -205,7 +203,17 @@
   define (ni `schema.json` ni `spec.types.ts`, y el texto de la especificación
   hace al servidor el único que decide la ejecución como tarea), así que el
   schema abierto acepta cualquier valor. Es una relajación en runtime; el tipo
-  exportado pasa a `JsonValue`.
+  exportado pasa a `JsonValue`. El tipo de `fail()` se estrecha al nuevo
+  `TaskError`, para que el compilador rechace lo mismo que el runtime. Las
+  respuestas de input tras un reinicio se cierran con diseño A (decisión del
+  propietario): se guardan en el campo interno `unclaimedInputResponses`, que
+  nunca llega al wire, y `TaskHandle.resumeInput()` las reclama una sola vez.
+  Un store de terceros debe persistir ese campo, y el kit lo comprueba. Además,
+  la `signal` del worker se aborta cuando vence el TTL (política del motor,
+  cooperativa y local al proceso: la spec deja al servidor cómo detener el
+  trabajo, según ext-tasks#11). Queda una ventana estrecha documentada: si el
+  worker en espera es rechazado entre la decisión de entregar y el commit, esas
+  respuestas se pierden. Antes del tag se pide la auditoría que exige AGENTS.md.
 - ❌ **Driver de cliente retirado.** El antiguo F12 (`/client`) sale del
   roadmap: `@modelcontextprotocol/ext-tasks/client` cubre el lado requester.
   La decisión y su razonamiento están en
