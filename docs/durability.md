@@ -61,6 +61,7 @@ directory:
 | Task created, nothing else                     | Present, `working`                                        |
 | Parked on `input_required`                     | Still parked, with its request keys                       |
 | Parked, then reopened                          | Still refuses to reuse a key the dead process issued      |
+| Answered with no worker, killed, then claimed  | Answers kept until one worker claims them, then gone      |
 | `complete()` returned, then killed instantly   | Result intact                                             |
 | Acknowledged progress, then killed in appends  | At least that version and value remain                    |
 | Torn record at the tail                        | Truncated away, and the next append does not fuse with it |
@@ -183,29 +184,13 @@ worker's process. After a crash there is no promise to wake — there is the
 task's durable status, which is the point. What a restarted server cannot do
 is resume the suspended function call that was running before.
 
-**Input responses are not durable on their own.** The store keeps the
-outstanding requests, any partial responses and the lifetime key ledger, but
-a response is only ever delivered to a waiting worker; the record does not
-keep a completed round's answers. After a restart that has consequences a
-restarted server has to plan for:
+**Input responses survive, the suspended call does not.** The store keeps the outstanding requests, any partial responses and the lifetime key ledger. When a client's reply completes a round, the answers go straight to the worker waiting for them if there is one in that process, and nothing else is stored. If there is none, as after a restart, the same write that moves the task to `working` also stores the answers in the internal `unclaimedInputResponses` field, at the same durability boundary as every other write. A restarted worker claims them once with `resumeInput()`:
 
-- The task is still `input_required`, and clients still see its requests on
-  `tasks/get`. If a client answers every outstanding key before a worker in
-  the new process asks again, `tasks/update` acknowledges the reply
-  (`resultType: "complete"`), the task moves to `working`, and **the answers
-  are discarded**: no worker was waiting, and the stored record keeps the
-  keys in `usedInputKeys` but no responses.
-- A restarted worker cannot re-issue the old keys. Keys are unique for the
-  life of the task (I5), so `requestInput()` with a key the dead process
-  already used throws `DuplicateInputKeyError`, whether or not the client
-  answered it. A restarted worker drives the task again only by asking with
-  **new** keys, which starts a new round the client has to answer.
+- The task is still `input_required` after the restart, and clients still see its requests on `tasks/get`. A reply that answers every outstanding key is acknowledged (`resultType: "complete"`), the task moves to `working`, and the answers are kept until a worker claims them. The wire shows nothing new.
+- The claim is a compare-and-swap that removes them. Once `resumeInput()` has resolved with the answers, a crash cannot hand them out again; if the process dies before the claim commits, they are still there for the next worker.
+- The old keys stay spent. Keys are unique for the life of the task (I5), so `requestInput()` with a key the dead process used still throws `DuplicateInputKeyError`. Opening a new round, or finishing the task, drops unclaimed answers, so a restarted worker calls `resumeInput()` first.
 
-So a restarted server can resume a task that was waiting for input, but it
-cannot recover input that was outstanding or answered across the restart.
-`test/wal-store.test.ts` pins this current behaviour, and it is recorded as a
-known limitation; persisting acknowledged responses is being evaluated
-separately and is not a guarantee in either direction.
+What is still lost: a round that `0.3.0` or earlier completed with no worker (its log has no answers to replay), and the narrow race in which the waiter a reply was meant for is rejected by cancellation, expiry or `close()` between the decision to deliver and the commit ([contract](contract.md#input-rounds)). `test/crash.test.ts` kills the process after the reply and again after the claim; `test/wal-store.test.ts` covers replay and a log written by `0.3.0`.
 
 While a worker _is_ live, `tasks/update` and `tasks/cancel` have to reach its
 instance. See [api.md](api.md#worker-process-affinity) and

@@ -180,20 +180,18 @@ async function work(task: TaskHandle) {
 }
 ```
 
-| Member                            | Contract                                                                 |
-| --------------------------------- | ------------------------------------------------------------------------ |
-| `taskId`                          | The id this handle writes to                                             |
-| `signal`                          | `AbortSignal`, raised by `tasks/cancel`. Cooperative — nothing is killed |
-| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`²     |
-| `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered           |
-| `complete(result)`                | Terminal. `result` must be a JSON object                                 |
-| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
-| `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour         |
+| Member                            | Contract                                                             |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `taskId`                          | The id this handle writes to                                         |
+| `signal`                          | `AbortSignal`, raised by `tasks/cancel` or TTL expiry³. Cooperative  |
+| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`² |
+| `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered       |
+| `resumeInput()`                   | Claims answers that arrived while no worker waited, exactly once     |
+| `complete(result)`                | Terminal. `result` must be a JSON object                             |
+| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹   |
+| `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour     |
 
-¹ The stable schema requires that shape for a failed task's `error`. The engine
-only checks that `error` is a JSON object today, so any other object reaches
-`tasks/get` and fails schema validation — a known defect
-([contract](contract.md#wire-contract)).
+¹ The stable schema requires that shape for a failed task's `error`. The parameter is typed as the exported `TaskError`, `{ code: number; message: string; data?: JsonValue }`. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and nothing is written, which also covers untyped JavaScript. Other JSON members that reach it anyway are kept, because the schema is open. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`: a log written before this check may hold a failed task with some other `error`, and it still opens and serves that error unchanged ([contract](contract.md#wire-contract)).
 
 ² Both hints follow the same rules as in `createTask()`: whole milliseconds in
 the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value
@@ -201,6 +199,8 @@ throws `TypeError` and the whole call, message included, is not applied.
 `statusMessage` must be a string here, in `cancelled()` and in `createTask()`;
 TypeScript enforces that, and the engine checks it again at runtime for
 JavaScript callers, throwing `TypeError` without writing.
+
+³ Nothing is killed in either case. `signal.reason` is a `TaskCancelled` after `tasks/cancel`, and a `TaskNotFoundError` when the task's TTL elapses: the task is gone, and every later write and `tasks/get` say so with the same error. A signal already raised by a cancellation keeps its first reason. Expiry is measured by the lifecycle's clock from `createdAt` plus the current `ttlMs`, including a TTL revised with `progress()`; `ttlMs: null` never aborts. The first read of `signal` looks the record up once, so a worker that reads it and never writes is told too. This is an engine policy, not something the extension requires; nothing is written and the wire does not change ([contract](contract.md#process-boundaries)).
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised
@@ -232,12 +232,13 @@ const answers = await task.requestInput({
   before the task moves.
 - **Validation was written from the SDK source at version 1.30.0** and is
   checked against the stable `2026-07-28` definitions: integer `maxTokens`,
-  Base64 binary blocks, an object-rooted tool `inputSchema`,
-  `execution.taskSupport`, `file://` roots, and a URL-valid `url` for URL
-  elicitation. Following `2026-07-28`, URL elicitation does not need an
-  `elicitationId` (one that is present is kept), a tool `outputSchema` may be
-  any JSON Schema object, and a tool result's `structuredContent` may be any
-  JSON value. A sampling message, and the sampling result that answers it,
+  Base64 binary blocks, an object-rooted tool `inputSchema`, a string
+  `$schema` wherever a schema carries one, `file://` roots, and a URL-valid
+  `url` for URL elicitation. Following `2026-07-28`, URL elicitation does not
+  need an `elicitationId` (one that is present is kept), a tool `outputSchema`
+  may be any JSON Schema object, a tool result's `structuredContent` may be
+  any JSON value, and a tool's `execution`, which that revision does not
+  define, may be any JSON value and is kept unchanged. A sampling message, and the sampling result that answers it,
   carry only text, image, audio, `tool_use` and `tool_result` blocks; resource
   links and embedded resources are accepted only inside a `tool_result`'s
   `content`. The remaining differences from the schema are listed in the
@@ -269,14 +270,25 @@ broker would turn this state engine into the queue explicitly excluded by the
 [non-goals](contract.md#non-goals). After a crash there is no promise left to
 wake — there is durable state, which is the point.
 
-That durable state does not include the answers to a round. If a task was
-`input_required` when its process died, a restarted worker must ask with
-**new** keys: re-issuing a key the dead process used throws
-`DuplicateInputKeyError`. And a client reply that answers every outstanding
-key before any worker in the new process asks is acknowledged with
-`{ resultType: "complete" }` and moves the task to `working`, but the
-responses are not stored and reach no worker. See
-[durability.md](durability.md#what-durability-does-not-cover).
+### `resumeInput()`
+
+That durable state includes the answers to a round nobody was waiting for. If a task was `input_required` when its process died, a client reply that answers every outstanding key is acknowledged with `{ resultType: "complete" }`, moves the task to `working` as before, and is kept, off the wire, until a worker claims it. A restarted worker claims it with `resumeInput()`:
+
+```ts
+async function resume(task: TaskHandle) {
+  const answers = await task.resumeInput();
+  if (answers !== undefined) return continueWith(answers);
+  // Nothing arrived yet. A reply that comes later is kept the same way, so
+  // either call resumeInput() again later or ask again with new keys.
+}
+```
+
+- It resolves with the retained responses **exactly once**. The claim is a compare-and-swap write that removes them, so concurrent callers, or another instance on a shared store, cannot both receive them, and a crash after it resolves cannot hand them out again.
+- It resolves with `undefined`, and writes nothing, when there is nothing to claim: no round was completed without a worker, the answers were already claimed, or a live waiter received them directly.
+- Like every write, it throws `TaskNotFoundError` for a missing or expired task and `TaskAlreadyTerminalError` for a finished one. A terminal transition drops unclaimed answers.
+- **Call it before `requestInput()`.** Opening a new round drops unclaimed answers, because the worker has chosen not to use them. The claimed keys stay spent: re-issuing a key the dead process used still throws `DuplicateInputKeyError` (I5).
+
+A log written by `0.3.0` or earlier opens unchanged, and a round such a version completed with no worker stays lost. See [durability.md](durability.md#what-durability-does-not-cover) and the [contract](contract.md#input-rounds).
 
 ---
 
@@ -322,11 +334,13 @@ Four rules that are easy to get wrong, and that the conformance kit checks:
    than restarting the clock; setting it to `null` makes the task unlimited
    from then on.
 
-`TaskRecord` carries three fields that are **internal and must never reach the
-wire**: `version`, `inputResponses` and `usedInputKeys`. The engine's
+`TaskRecord` carries four fields that are **internal and must never reach the
+wire**: `version`, `inputResponses`, `unclaimedInputResponses` and `usedInputKeys`. The engine's
 projection is allow-list based so they cannot leak, but a store must persist
 them faithfully — `usedInputKeys` in particular has to survive both the
 terminal transition and a replay, or key uniqueness breaks after a restart.
+
+**Persist every field, including ones you do not recognise.** `unclaimedInputResponses` was added after `0.3.0`; it holds answers a client already gave while no worker was waiting. A store that writes, reads or replays only a fixed list of the fields it knew earlier drops them, and a restarted worker never sees those answers. The conformance kit checks the field through `update()`, `get()` and `reopen()`.
 
 ---
 
@@ -399,6 +413,8 @@ and, if it left the underlying log unusable, surfaced on the next operation.
 | `DuplicateInputKeyError`   | An input key was reused within one task's lifetime           | Fix the caller — this is a bug       |
 | `TaskEntryTooLargeError`   | A record exceeded `maxEntryBytes`. Nothing was committed     | Complete again with a smaller result |
 | `TaskCancelled`            | The reason on an aborted `signal`, not thrown by the library | Stop the work                        |
+
+`TaskNotFoundError` is also the reason on a `signal` aborted because the task's TTL elapsed. Tell the two apart with `signal.reason.name`.
 
 `TaskEntryTooLargeError` carries a stable `code` of `ERR_ENTRY_TOO_LARGE`, so a
 worker can recover rather than lose the work it just finished:

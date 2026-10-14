@@ -125,9 +125,9 @@ interface SamplingTool {
   name: string;
   title?: string;
   description?: string;
-  inputSchema: JsonObject & { type: "object" };
+  inputSchema: JsonObject & { type: "object"; $schema?: string };
   /** Any JSON Schema object; 2026-07-28 does not require an `object` root. */
-  outputSchema?: JsonObject;
+  outputSchema?: JsonObject & { $schema?: string };
   annotations?: {
     title?: string;
     readOnlyHint?: boolean;
@@ -136,9 +136,12 @@ interface SamplingTool {
     openWorldHint?: boolean;
   };
   icons?: readonly ContentIcon[];
-  execution?: {
-    taskSupport?: "required" | "optional" | "forbidden";
-  };
+  /**
+   * Not part of the 2026-07-28 `Tool`. Kept so code written against the
+   * 2025-11-25 shape (`{ taskSupport?: "required" | "optional" | "forbidden" }`)
+   * still compiles; any JSON value is accepted and carried unchanged.
+   */
+  execution?: JsonValue;
   _meta?: JsonObject;
 }
 
@@ -283,11 +286,29 @@ export interface JsonObject {
 }
 
 /**
+ * The JSON-RPC error that ends a failed task, as {@linkcode TaskHandle.fail}
+ * accepts it. The stable schema's `Error` requires an integer `code` and a
+ * string `message`; its `data` is any value the sender defines, which a
+ * stored task narrows to JSON. `code` is `number` as in `spec.types.ts`, and
+ * `fail()` additionally refuses a non-integer at runtime.
+ *
+ * A type alias rather than an interface so that it stays assignable to
+ * {@linkcode JsonObject}. Records and the wire keep `error: JsonObject`,
+ * because stored records are not revalidated: a log written before `fail()`
+ * checked its argument may hold any JSON object there.
+ */
+export type TaskError = {
+  code: number;
+  message: string;
+  data?: JsonValue;
+};
+
+/**
  * What a {@linkcode TaskStore} persists.
  *
- * **This is not the wire shape.** `version`, `inputResponses` and
- * `usedInputKeys` — all of which a correct store must keep — are internal and
- * must never reach a client. The stable schema is open (it sets no
+ * **This is not the wire shape.** `version`, `inputResponses`,
+ * `unclaimedInputResponses` and `usedInputKeys` — all of which a correct
+ * store must keep — are internal and must never reach a client. The stable schema is open (it sets no
  * `additionalProperties: false`) and would not reject them, so keeping them
  * off the wire is this package's own guarantee: the projection is one
  * function (`toDetailedTask`) and it is allow-list based for that reason.
@@ -308,6 +329,14 @@ export interface TaskRecord {
   readonly inputRequests?: InputRequests;
   /** Responses gathered so far for the outstanding round. Internal. */
   readonly inputResponses?: InputResponses;
+  /**
+   * The answers to a completed round that no worker in the process was
+   * waiting for, as after a restart. Internal. Present only on a `working`
+   * task, from the update that completed the round until a worker claims
+   * them with {@linkcode TaskHandle.resumeInput}, opens a new round, or the
+   * task ends. A store must persist it like every other field.
+   */
+  readonly unclaimedInputResponses?: InputResponses;
   /**
    * Every input key this task has ever issued. Internal, and it must survive
    * both the terminal transition and a store replay: the spec forbids reusing
@@ -464,11 +493,31 @@ export interface TaskHandle {
    */
   requestInput(requests: Record<string, InputRequest>): Promise<InputResponses>;
 
+  /**
+   * Claims the answers to a round that was completed while no worker in this
+   * process was waiting for it, typically because the process that asked
+   * was restarted. Resolves with those responses exactly once, then with
+   * `undefined`; with `undefined` straight away when there is nothing to
+   * claim, without writing. The claim is a compare-and-swap write, so two
+   * concurrent callers cannot both receive the same answers.
+   *
+   * A restarted worker calls this before it asks again: opening a new round
+   * with `requestInput()` discards unclaimed answers, and the old keys stay
+   * spent (I5). Throws like any other write on a terminal or missing task.
+   */
+  resumeInput(): Promise<InputResponses | undefined>;
+
   /** Terminal. The result must be a JSON object, per the schema. */
   complete(result: JsonObject): Promise<void>;
 
-  /** Terminal. Carries the JSON-RPC error that ended the task. */
-  fail(error: JsonObject): Promise<void>;
+  /**
+   * Terminal. Carries the JSON-RPC error that ended the task: an integer
+   * `code` and a string `message` are required, `data` is optional. Anything
+   * else throws `TypeError` and nothing is written. Further JSON members are
+   * kept if present, as the open schema allows, but the type does not invite
+   * them.
+   */
+  fail(error: TaskError): Promise<void>;
 
   /**
    * Terminal. Acknowledges a cancellation the worker chose to honour.

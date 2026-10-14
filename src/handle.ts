@@ -4,11 +4,13 @@ import type {
   InputRequest,
   InputResponses,
   JsonObject,
+  TaskError,
   TaskHandle,
   TaskPatch,
   TaskRecord,
 } from "./types.js";
 import {
+  assertJsonRpcError,
   assertPollIntervalMs,
   assertStatusMessage,
   assertTtlMs,
@@ -35,6 +37,7 @@ export interface TaskWriter {
     taskId: string,
     requests: Record<string, InputRequest>,
   ): Promise<InputResponses>;
+  resumeInput(taskId: string): Promise<InputResponses | undefined>;
 }
 
 export function createTaskHandle(
@@ -91,6 +94,10 @@ export function createTaskHandle(
       );
     },
 
+    resumeInput() {
+      return writer.resumeInput(taskId);
+    },
+
     async complete(result: JsonObject) {
       const normalized = normalizeJsonObject(result, "complete");
       await writer.mutate(taskId, () => ({
@@ -100,16 +107,19 @@ export function createTaskHandle(
         // the no-reuse rule outlives the terminal transition (I5).
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
 
-    async fail(error: JsonObject) {
+    async fail(error: TaskError) {
       const normalized = normalizeJsonObject(error, "fail");
+      assertJsonRpcError(normalized, "fail() error");
       await writer.mutate(taskId, () => ({
         status: "failed",
         error: normalized,
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
 
@@ -122,6 +132,7 @@ export function createTaskHandle(
         ...(statusMessage !== undefined && { statusMessage }),
         inputRequests: undefined,
         inputResponses: undefined,
+        unclaimedInputResponses: undefined,
       }));
     },
   };

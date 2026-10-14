@@ -10,6 +10,45 @@ either is a major version.
 
 ## [Unreleased]
 
+### Added
+
+- A worker's `handle.signal` is now aborted when its task's TTL elapses, with a `TaskNotFoundError` as the reason. Until now the lifecycle dropped the signal at expiry without aborting it, so a worker that held it was never told its task was gone; only its next write found out. This is an engine policy, since the extension leaves stopping the work to the server: cooperative, process-local, measured by the lifecycle's clock including a TTL revised with `progress()`, and never for `ttlMs: null`. Nothing is written and the wire does not change; an expired task still reads as not found. A signal already raised by `tasks/cancel` keeps its `TaskCancelled` reason, and a worker parked in `requestInput()` is still rejected exactly once, with the same `TaskNotFoundError`. The first read of `handle.signal` now performs one `store.get()` so that a worker that reads its signal and never writes is told too, and a worker write that finds the task already expired in the store aborts the signal the same way. Observable: a worker that checks `signal.aborted` to decide whether it was cancelled should check `signal.reason.name` as well.
+- `TaskHandle.resumeInput()` lets a restarted worker continue from input a client gave while no worker was running. When a `tasks/update` completes a round and no worker in this process asked for it (the process that asked was restarted), the engine now keeps the answers in a new internal record field, `unclaimedInputResponses`, instead of discarding them. The acknowledgement, the move to `working` and the wire are unchanged; the field never appears in `tasks/get`. `resumeInput()` returns the answers exactly once, through a compare-and-swap that removes them, and `undefined` otherwise without writing. The used keys stay spent (I5). Unclaimed answers are dropped when the task ends or the worker opens a new round, so a restarted worker calls `resumeInput()` first. A log written by `0.3.0` or earlier opens unchanged. This closes the `0.3.0` known issue "Input responses do not survive a restart", for rounds completed from now on.
+- **Breaking for third-party stores:** a `TaskStore` must persist `unclaimedInputResponses` through `create()`, `update()`, `get()` and reopen like every other record field. A store that keeps only a fixed list of the fields it knew in `0.3.0` loses those answers. The conformance kit has two new checks for it ("update() persists unclaimed input responses, and undefined clears them" and, with `reopen`, "unclaimed input responses survive reopen until a claim clears them"), and the "every field" check now includes it. Both included stores pass unchanged. Code that implements the `TaskHandle` interface itself (a test double, say) must add `resumeInput()`.
+
+### Fixed
+
+- A `tasks/update` that completes an older input round while the worker's `requestInput()` for a newer round is still being written no longer resolves the newer round's promise with the older round's answers. Each waiter is now bound to the keys it asked for.
+- **Breaking:** `fail()` now requires a JSON-RPC error object, as the stable
+  `2026-07-28` schema does for a failed task's `error`: an integer `code` and
+  a string `message`, with optional `data` of any JSON value. Other members
+  are still kept. A missing or non-integer `code`, or a missing or non-string
+  `message`, throws `TypeError` and nothing is written; previously any JSON
+  object was stored, and every `tasks/get` for that task then failed schema
+  validation. A WAL written before this change still opens unchanged: a
+  stored non-conforming `error` is served as is until the task expires, since
+  a failed task cannot be written again. Listed as a known issue in `0.3.0`.
+- **Breaking (types):** `TaskHandle.fail()` now takes the new exported `TaskError` type, `{ code: number; message: string; data?: JsonValue }`, instead of any `JsonObject`, so the compiler refuses what the runtime check above refuses. An object literal without `code` or `message`, or with extra members, no longer compiles. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`, since stored records are not revalidated.
+- **Breaking:** a sampling tool whose `inputSchema.$schema` or
+  `outputSchema.$schema` is present but not a string is now refused by
+  `requestInput()` with `TypeError`, and nothing is written. Both the stable
+  schema and its TypeScript source type it as a string, as for a form
+  elicitation's `requestedSchema.$schema`, which `0.3.0` already checks. It
+  used to be accepted and stored, and every `tasks/get` for the task then
+  failed schema validation. The exported tool type now declares
+  `$schema?: string` on both schemas. Listed as a known issue in `0.3.0`.
+- **Behaviour change:** input validation no longer checks a sampling tool's
+  `execution` beyond requiring plain JSON. The field, with its `taskSupport`
+  enum, is a `2025-11-25` (SDK 1.30.0) `Tool` member that the `2026-07-28`
+  `Tool` does not define, in neither `schema.json` nor `spec.types.ts`, and
+  the open schema accepts any value there. An `execution` that is not an
+  object, or whose `taskSupport` is outside `required`/`optional`/`forbidden`,
+  used to be refused with `TypeError`; it is now accepted and kept unchanged.
+  A relaxation: nothing accepted before is refused now. In the exported types,
+  `execution` is now a `JsonValue`, so code that reads
+  `execution.taskSupport` from a stored request must narrow it first. Listed
+  as a known issue in `0.3.0`.
+
 ## [0.3.0] - 2026-10-13
 
 A hardening release: it closes the engine and conformance-kit findings of an
@@ -166,18 +205,9 @@ feature is added: the `notifications/tasks` change emitter and the
   `docs/contract.md` now state the limitation. Pinned as current behaviour,
   not a guarantee, in `test/wal-store.test.ts`.
 
-Found by validating engine output against the stable `2026-07-28` schema.
-Each is pinned by a test in `test/schema-conformance.test.ts` and described in
-`docs/contract.md`.
-
-- `fail()` accepts any JSON object, while the schema requires a JSON-RPC error
-  with an integer `code` and a string `message` (expected-fail tests).
-- Input validation accepts a non-string `$schema` inside a sampling tool's
-  `inputSchema` or `outputSchema`, which the schema rejects, so such a request
-  reaches `tasks/get` non-conforming. It also still refuses an
-  `execution.taskSupport` value outside the SDK 1.30.0 enum, a field the
-  `2026-07-28` `Tool` does not define. Both are pinned as current behaviour
-  pending a decision.
+The three schema-conformance issues this release listed here (`fail()`
+accepting any JSON object, a non-string tool-schema `$schema`, and the
+`execution.taskSupport` check) are fixed under `[Unreleased]`.
 
 ## [0.2.1] - 2026-08-11
 

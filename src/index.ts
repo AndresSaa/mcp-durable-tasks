@@ -40,6 +40,7 @@ export type {
   InputRequiredTask,
   JsonObject,
   JsonValue,
+  TaskError,
   TaskHandle,
   TaskLifecycleOptions,
   TaskPatch,

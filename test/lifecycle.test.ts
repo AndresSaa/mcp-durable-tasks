@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as publicApi from "../src/index.js";
 import {
   ConcurrentUpdateError,
@@ -9,6 +9,8 @@ import {
   TaskLifecycle,
   TaskNotFoundError,
   type InputRequest,
+  type TaskError,
+  type TaskHandle,
   type TaskRecord,
   type TaskStore,
 } from "../src/index.js";
@@ -378,7 +380,11 @@ describe("the public lifecycle surface", () => {
 describe("terminality (I2)", () => {
   it.each([
     ["complete", (h: ReturnType<TaskLifecycle["handle"]>) => h.complete({})],
-    ["fail", (h: ReturnType<TaskLifecycle["handle"]>) => h.fail({ code: -1 })],
+    [
+      "fail",
+      (h: ReturnType<TaskLifecycle["handle"]>) =>
+        h.fail({ code: -1, message: "boom" }),
+    ],
     ["cancelled", (h: ReturnType<TaskLifecycle["handle"]>) => h.cancelled()],
   ])("refuses a second terminal transition after %s", async (_name, finish) => {
     const { engine } = build();
@@ -862,6 +868,189 @@ describe("the inputRequests round trip", () => {
   });
 });
 
+// After a restart nothing in the new process waits on the round a dead worker
+// opened. A client reply that completes it is retained, off the wire, until a
+// worker claims it with resumeInput(); the task moves to working as before.
+describe("input responses that arrive with no worker", () => {
+  /** A task parked by a process that is gone: no waiter here. */
+  async function orphanedRound(
+    requests: Record<string, InputRequest> = { a: ROOTS, b: ROOTS },
+  ) {
+    const store = new MemoryTaskStore();
+    const stamp = new Date().toISOString();
+    await store.create({
+      taskId: "t",
+      status: "input_required",
+      createdAt: stamp,
+      lastUpdatedAt: stamp,
+      ttlMs: null,
+      inputRequests: requests,
+      inputResponses: {},
+      usedInputKeys: ["older", ...Object.keys(requests)],
+      version: 3,
+    });
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    return { store, engine, handle: engine.handle("t") };
+  }
+
+  it("retains a completing reply, moves the task to working, and keeps it off the wire", async () => {
+    const { store, engine } = await orphanedRound();
+    await expect(
+      engine.updateTask("t", { a: rootsResponse(), b: rootsResponse() }),
+    ).resolves.toEqual({ resultType: "complete" });
+
+    const record = await store.get("t");
+    expect(record).toMatchObject({
+      status: "working",
+      unclaimedInputResponses: { a: { roots: [] }, b: { roots: [] } },
+      usedInputKeys: ["older", "a", "b"],
+      version: 4,
+    });
+    expect(record).not.toHaveProperty("inputRequests");
+    expect(record).not.toHaveProperty("inputResponses");
+    const view = await engine.getTask("t");
+    expect(view.status).toBe("working");
+    expect(view).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it("retains every answer of a round completed across several partial updates", async () => {
+    const { store, engine } = await orphanedRound();
+    await engine.updateTask("t", { a: rootsResponse() });
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.updateTask("t", { b: rootsResponse(), ghost: {} });
+    expect((await store.get("t"))?.unclaimedInputResponses).toEqual({
+      a: { roots: [] },
+      b: { roots: [] },
+    });
+    await engine.close();
+  });
+
+  it("is claimed by resumeInput() exactly once", async () => {
+    const { store, engine, handle } = await orphanedRound();
+    await engine.updateTask("t", { a: rootsResponse(), b: rootsResponse() });
+
+    const claims = await Promise.all(
+      Array.from({ length: 5 }, () => engine.handle("t").resumeInput()),
+    );
+    const claimed = claims.filter((claim) => claim !== undefined);
+    expect(claimed).toEqual([{ a: { roots: [] }, b: { roots: [] } }]);
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    const record = await store.get("t");
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    expect(record).toMatchObject({ status: "working", version: 5 });
+    await engine.close();
+  });
+
+  it("returns a copy the worker may change freely", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    const claimed = (await handle.resumeInput()) as Record<
+      string,
+      { roots: unknown[] }
+    >;
+    claimed.a!.roots.push("changed");
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it("writes nothing when there is nothing to claim", async () => {
+    const { store, engine } = build();
+    const { taskId } = await engine.createTask();
+    const update = vi.spyOn(store, "update");
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(update).not.toHaveBeenCalled();
+    await engine.close();
+  });
+
+  it("keeps the live-worker path unchanged: the waiter gets the answers and nothing is retained", async () => {
+    const { store, engine } = build();
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+    const before = await store.get(taskId);
+
+    await engine.updateTask(taskId, { a: rootsResponse() });
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    const record = await store.get(taskId);
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    expect(record?.version).toBe(before!.version + 1);
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    await engine.close();
+  });
+
+  it("is cleared when the worker opens a new round, and the old keys stay spent (I5)", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+
+    await expect(handle.requestInput({ a: ROOTS })).rejects.toBeInstanceOf(
+      DuplicateInputKeyError,
+    );
+    expect((await store.get("t"))?.unclaimedInputResponses).toBeDefined();
+
+    const next = handle.requestInput({ c: ROOTS });
+    void next.catch(() => undefined);
+    await untilParked(engine, "t");
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await engine.close();
+  });
+
+  it.each([
+    ["complete()", (h: TaskHandle) => h.complete({ ok: true })],
+    ["fail()", (h: TaskHandle) => h.fail({ code: -32000, message: "m" })],
+    ["cancelled()", (h: TaskHandle) => h.cancelled()],
+  ])("is cleared by %s", async (_name, finish) => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    await finish(handle);
+    expect(await store.get("t")).not.toHaveProperty("unclaimedInputResponses");
+    await expect(handle.resumeInput()).rejects.toBeInstanceOf(
+      TaskAlreadyTerminalError,
+    );
+    await engine.close();
+  });
+
+  it("survives progress(), which does not touch it", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    await engine.updateTask("t", { a: rootsResponse() });
+    await handle.progress("restarted");
+    expect((await store.get("t"))?.unclaimedInputResponses).toEqual({
+      a: { roots: [] },
+    });
+    await engine.close();
+  });
+
+  it("throws TaskNotFoundError for a task that does not exist", async () => {
+    const { engine } = build();
+    await expect(engine.handle("nope").resumeInput()).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    await engine.close();
+  });
+
+  it("never hands one round's answers to a worker waiting on a newer round", async () => {
+    const { store, engine, handle } = await orphanedRound({ a: ROOTS });
+    // The client's answer to the old round and the worker's new round race.
+    const update = engine.updateTask("t", { a: rootsResponse() });
+    const next = handle.requestInput({ c: ROOTS });
+    const settled = vi.fn();
+    next.then(settled, settled);
+    await update;
+    await untilParked(engine, "t");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(settled).not.toHaveBeenCalled();
+    expect(await store.get("t")).toMatchObject({
+      status: "input_required",
+      inputRequests: { c: ROOTS },
+    });
+    await engine.updateTask("t", { c: rootsResponse() });
+    await expect(next).resolves.toEqual({ c: { roots: [] } });
+    await engine.close();
+  });
+});
+
 describe("argument checking", () => {
   it.each([
     ["completion result", "complete"],
@@ -869,7 +1058,8 @@ describe("argument checking", () => {
   ] as const)("canonicalises signed zero in a %s", async (_name, method) => {
     const { engine, store } = build();
     const { taskId } = await engine.createTask();
-    const payload = { nested: { signedZero: -0 } };
+    // A valid JSON-RPC error too, so the same payload suits fail().
+    const payload = { code: -32000, message: "m", nested: { signedZero: -0 } };
 
     await engine.handle(taskId)[method](payload);
     const record = (await store.get(taskId))!;
@@ -909,6 +1099,86 @@ describe("argument checking", () => {
     await expect(
       engine.handle(taskId).fail("nope" as never),
     ).rejects.toBeInstanceOf(TypeError);
+  });
+
+  // The stable schema types a failed task's `error` as a JSON-RPC error:
+  // integer `code`, string `message`, optional `data`. Anything else would be
+  // stored and then emitted on every tasks/get as a result the schema rejects.
+  it.each<[string, unknown]>([
+    ["an empty object", {}],
+    ["an object without code or message", { reason: "x" }],
+    ["a missing message", { code: -32000 }],
+    ["a missing code", { message: "boom" }],
+    ["a fractional code", { code: 1.5, message: "boom" }],
+    ["a numeric-string code", { code: "-32000", message: "boom" }],
+    ["a null code", { code: null, message: "boom" }],
+    ["a non-string message", { code: -32000, message: 42 }],
+    ["a null message", { code: -32000, message: null }],
+  ])("fail() refuses %s and stores nothing", async (_name, error) => {
+    const store = new MemoryTaskStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const before = await engine.getTask(taskId);
+    const update = vi.spyOn(store, "update");
+
+    await expect(engine.handle(taskId).fail(error as never)).rejects.toThrow(
+      /fail\(\) error must be a JSON-RPC error object with an integer code and a string message/,
+    );
+    await expect(
+      engine.handle(taskId).fail(error as never),
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(update).not.toHaveBeenCalled();
+    await expect(engine.getTask(taskId)).resolves.toEqual(before);
+    await engine.close();
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["code and message only", { code: -32603, message: "boom" }],
+    ["object data", { code: 1, message: "m", data: { attempt: 1 } }],
+    ["scalar data", { code: 0, message: "", data: "detail" }],
+    ["null data", { code: -1, message: "m", data: null }],
+    ["an extra member", { code: -32000, message: "m", retryable: false }],
+    [
+      "a code at the edge of the safe range",
+      { code: Number.MIN_SAFE_INTEGER, message: "m" },
+    ],
+  ])("fail() accepts a JSON-RPC error with %s", async (_name, error) => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask();
+    await engine.handle(taskId).fail(error as never);
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      status: "failed",
+      error,
+    });
+    await engine.close();
+  });
+
+  // The parameter type says what the runtime check enforces, so `tsc` (run by
+  // `pnpm lint`) catches a looser object before it reaches the engine.
+  it("types fail()'s parameter as a JSON-RPC error", async () => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const valid: TaskError = { code: -32000, message: "m", data: [1, "x"] };
+
+    const refused = [
+      // @ts-expect-error -- no code or message
+      () => handle.fail({ reason: "x" }),
+      // @ts-expect-error -- missing message
+      () => handle.fail({ code: 1 }),
+      // @ts-expect-error -- message must be a string
+      () => handle.fail({ code: 1, message: 2 }),
+      // @ts-expect-error -- data must be JSON
+      () => handle.fail({ code: 1, message: "m", data: new Date() }),
+    ];
+    for (const call of refused) {
+      await expect(call()).rejects.toBeInstanceOf(TypeError);
+    }
+    await handle.fail(valid);
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      error: valid,
+    });
+    await engine.close();
   });
 
   it.each([
@@ -993,7 +1263,8 @@ describe("cancellation", () => {
       await store.sweep(time.now());
 
       // The aborted controller that cancelTask created is gone: a handle for
-      // the same id now reads a fresh, unraised signal.
+      // the same id now reads a fresh signal, not the TaskCancelled one (its
+      // lookup later aborts it as not found, since the task is gone).
       for (const taskId of ids) {
         expect(engine.handle(taskId).signal.aborted).toBe(false);
       }
@@ -1121,6 +1392,146 @@ describe("TTL", () => {
     const removed = await store.sweep(time.now());
     expect(removed).toBe(2);
     expect(typeof removed).toBe("number");
+  });
+});
+
+// TTL bounds how long the task is exposed; stopping the work is the server's
+// policy. This engine's policy is cooperative: a worker holding the signal is
+// told, with the TaskNotFoundError the task now reads as. Nothing is written.
+describe("the worker signal at TTL expiry", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    process.off("unhandledRejection", onUnhandled);
+  });
+
+  async function elapse(time: ReturnType<typeof clock>, ms: number) {
+    time.advance(ms);
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  it("aborts a held signal with TaskNotFoundError, and the task reads as not found", async () => {
+    const { engine, store, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    const update = vi.spyOn(store, "update");
+
+    await elapse(time, 999);
+    expect(signal.aborted).toBe(false);
+
+    await elapse(time, 1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(engine.getTask(taskId)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("never aborts the signal of a task with ttlMs null", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: null });
+    const signal = engine.handle(taskId).signal;
+
+    await elapse(time, 10 * 3_600_000);
+    expect(signal.aborted).toBe(false);
+    await engine.close();
+  });
+
+  it("re-arms when progress() extends the TTL, and does not abort at the old expiry", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+
+    await elapse(time, 500);
+    await handle.progress("extending", { ttlMs: 3_000 });
+
+    await elapse(time, 500);
+    expect(signal.aborted).toBe(false);
+    await expect(engine.getTask(taskId)).resolves.toBeDefined();
+
+    await elapse(time, 2_000);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await engine.close();
+  });
+
+  it("rejects a worker parked in requestInput exactly once, and aborts its signal", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const parked = handle.requestInput({ a: ROOTS });
+    const signal = handle.signal;
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await engine.getTask(taskId)).status).toBe("input_required");
+
+    await elapse(time, 1_000);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBe(settled.mock.calls[0]![0]);
+
+    // Expiry released the controller. Reading the signal again yields a new
+    // one, which is aborted as soon as its lookup finds the task gone.
+    const reread = handle.signal;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reread.reason).toBeInstanceOf(TaskNotFoundError);
+
+    // A late answer finds no task and wakes nothing a second time.
+    await expect(
+      engine.updateTask(taskId, { a: rootsResponse() }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("keeps TaskCancelled as the reason when the task was cancelled first", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    await engine.cancelTask(taskId);
+
+    await elapse(time, 1_000);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
+    await engine.close();
+  });
+
+  it("aborts the signal when a worker's write finds the task already gone", async () => {
+    // The store's clock is ahead of the lifecycle's, so the write sees the
+    // expiry before the lifecycle's own timer does.
+    const time = clock();
+    const storeTime = clock();
+    const store = new MemoryTaskStore({ now: storeTime.now });
+    const engine = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    await vi.advanceTimersByTimeAsync(0);
+
+    storeTime.advance(1_000);
+    await expect(handle.progress("late")).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await engine.close();
   });
 });
 

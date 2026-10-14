@@ -98,7 +98,7 @@ may still complete or fail if work wins the race.
 
 - Task creation returns `resultType: "task"`. Get, update and cancel return
   `resultType: "complete"`. These discriminators are always explicit.
-- `TaskRecord.version`, stored input responses and the lifetime key ledger are
+- `TaskRecord.version`, stored input responses (`inputResponses` and `unclaimedInputResponses`) and the lifetime key ledger are
   internal fields and never appear in `tasks/get`.
 - The wire task is a closed shape. A status-specific payload is present only in
   its matching state: `result` for `completed`, `error` for `failed`, and live
@@ -129,14 +129,18 @@ may still complete or fail if work wins the race.
   unchanged, and therefore does not conform, until the worker revises it with
   `progress()`. Normalising it on read was rejected: it would make the wire
   disagree with the record that expiry is computed from, and replay never
-  writes.
+  writes. The same holds for a failed task's `error` written before `fail()`
+  required a JSON-RPC error, except that no write can revise it.
 - `statusMessage` must be a string. TypeScript already requires it; at
   runtime, for untyped JavaScript callers, `createTask()`, `progress()` and
   `cancelled()` throw `TypeError` for anything else, and nothing is written.
-- The stable schema types `error` as a JSON-RPC error object (`code` integer,
-  `message` string). The engine does not enforce that, so `fail()` with an
-  arbitrary object produces a `tasks/get` result the schema rejects. Recorded
-  as a known defect with expected-fail tests; not fixed yet.
+- The stable schema types a failed task's `error` as a JSON-RPC error object:
+  an integer `code` and a string `message` are required, `data` is optional
+  and may be any JSON value, and further members are allowed because the
+  schema is open. `fail()` takes the exported `TaskError` type, `{ code: number; message: string; data?: JsonValue }`, enforces the two required members at runtime and throws `TypeError` otherwise, after the plain-JSON check and before anything is written. The code must be an integer although `spec.types.ts` declares `code: number`: JSON-RPC 2.0 itself requires an integer, and the generated schema says so too. `data` is `unknown` in `spec.types.ts`; a stored task narrows it to JSON. The record and wire types keep `error: JsonObject`. Records already stored with any other `error` follow
+  the rule for stored records below; because a failed task is terminal,
+  nothing can revise such an error, and it is served unchanged until the
+  task's TTL elapses.
 - `createdAt` and `lastUpdatedAt` are ISO 8601 timestamps.
   `lastUpdatedAt >= createdAt` and never moves backwards, even if the injected
   clock does.
@@ -171,7 +175,7 @@ every client that polls, and an accepted response resumes the worker, so an
 invalid shape would become an unfulfillable task or a malformed worker input
 that outlives the request that carried it; and the main entry point cannot
 depend on an SDK to delegate to. What the check must not do is refuse a shape
-the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
+the targeted revision defines. Four SDK 1.30.0 rules did, and now follow the
 `2026-07-28` base types (`spec.types.ts`) instead:
 
 - URL elicitation needs only `message`, `mode: "url"` and a URL. The
@@ -181,8 +185,16 @@ the targeted revision defines. Three SDK 1.30.0 rules did, and now follow the
   `inputSchema` must be rooted at `type: "object"`, as before.
 - A tool result's `structuredContent` may be any JSON value, not only an
   object.
+- A sampling tool's `execution` is not checked beyond being JSON. The
+  `2026-07-28` `Tool` defines no `execution` member (`schema.json` and
+  `spec.types.ts` both lack it, and the specification makes the server the
+  sole decider of task augmentation per request), so the open schema accepts
+  any value there. The engine used to refuse an `execution` that was not an
+  object, or whose `taskSupport` was outside the `2025-11-25` values
+  `required`/`optional`/`forbidden`; it now keeps whatever JSON value is
+  present, unchanged.
 
-Each of the three is a relaxation: everything accepted before is still
+Each of the four is a relaxation: everything accepted before is still
 accepted. One rule went the other way, because the check was wider than the
 revision. A sampling message's `content`, and a `CreateMessageResult`'s
 `content`, are `SamplingMessageContentBlock`s: text, image, audio, `tool_use`
@@ -192,9 +204,11 @@ tool result's `content`, which is MCP's wider `ContentBlock`. Such a request
 parked the task and made every `tasks/get` non-conforming, and such a result
 resumed the worker. Both are now refused with `TypeError`; inside a
 `tool_result`, `content` still accepts the full `ContentBlock` set. Likewise,
-a form elicitation's `requestedSchema.$schema`, which both `schema.json` and
-`spec.types.ts` type as a string, is refused when present with any other
-type.
+a form elicitation's `requestedSchema.$schema`, and the `$schema` of a
+sampling tool's `inputSchema` or `outputSchema`, which both `schema.json` and
+`spec.types.ts` type as a string, are refused when present with any other
+type. A tool schema's non-string `$schema` used to be accepted and stored, and
+every `tasks/get` for the task then failed schema validation.
 
 With these aligned, the check and the snapshot agree except in these places:
 
@@ -208,13 +222,6 @@ With these aligned, the check and the snapshot agree except in these places:
   (multi-select fields). A fractional value in one of those limits therefore
   reaches `tasks/get` and fails the generated schema; it does not fail the
   TypeScript definition that upstream declares authoritative.
-- Found while aligning the three rules above and left for a decision, pinned
-  in the same test file: the engine refuses a tool `execution.taskSupport`
-  outside `required`/`optional`/`forbidden`, an SDK 1.30.0 field the
-  `2026-07-28` `Tool` does not define and the open schema therefore accepts;
-  and it accepts a non-string `$schema` inside a tool's `inputSchema` or
-  `outputSchema`, which the schema rejects. The second one lets a
-  non-conforming request reach `tasks/get`.
 
 The round-trip rules are:
 
@@ -230,16 +237,13 @@ The round-trip rules are:
   release a waiter.
 - Completing, failing, cancelling, expiring or closing rejects any outstanding
   process-local waiter exactly once.
-- Responses are delivered, not retained. A round's answers are stored only
-  while the round is partial; the update that completes it clears them,
-  moves the task to `working` and hands them to the local waiter. With no
-  waiter, as after a restart, that update is still acknowledged and still
-  moves the task to `working`, and the answers are lost. Because keys are
-  lifetime-unique, a restarted worker cannot ask the same keys again; it must
-  start a new round with new keys. This is current behaviour, recorded as a
-  known limitation rather than a guarantee
-  ([durability](durability.md#what-durability-does-not-cover)); whether
-  acknowledged responses should be persisted is an open package decision.
+- The update that completes a round clears the live request and response maps and moves the task to `working`. If a waiter in this process asked for exactly that round, the answers are handed to it after the commit and nothing else is stored, as before. If none did, as after a restart, the same update also stores the answers in the internal `unclaimedInputResponses` field. Either way the acknowledgement and the wire are unchanged.
+- The status after a round completed with no worker is `working`, not `input_required`. No request is outstanding any more, and `inputRequests` carries requests that "need to be fulfilled" (schema); keeping the task parked would show clients keys they have already answered and that the server would now ignore. `working` is also what the engine reported before answers were retained, so existing flows see no change.
+- `TaskHandle.resumeInput()` claims retained answers with a compare-and-swap that removes them, so exactly one caller receives them and only after the removal is durable; later calls, and calls with nothing retained, return `undefined` without writing. The claimed keys stay in `usedInputKeys` (I5): a restarted worker continues from the answers instead of asking again.
+- Retained answers are dropped by any terminal transition and when the worker opens a new round with `requestInput()`, which means it chose not to claim them. A restarted worker therefore calls `resumeInput()` before it asks again. `progress()` keeps them.
+- A waiter is bound to the keys of the round it asked for. An update that completes an older round while a newer round's `requestInput()` is still being written does not resolve the newer waiter with the older answers; they are retained, and then dropped when the newer round opens.
+- A log written by `0.3.0` or earlier opens unchanged: it has no `unclaimedInputResponses`, so a round that such a version completed with no worker remains lost, and `resumeInput()` returns `undefined`.
+- One narrow case still loses answers: the waiter that asked for the round is rejected (by cancellation, expiry or `close()`) after the completing update decided to deliver to it but before it committed. By then the worker has been told to stop, the task is gone, or the process is shutting down.
 
 ## Store invariants
 
@@ -262,13 +266,15 @@ store implementations:
   count, never records or identifiers.
 - **I8 — Crash recovery.** After process death and reopen, `WalTaskStore`
   recovers every acknowledged live state, including terminal payloads until
-  TTL expiry. The exact host-loss boundary depends on `fsync`; see
+  TTL expiry and input responses acknowledged while no worker was waiting. The exact host-loss boundary depends on `fsync`; see
   [durability.md](durability.md).
 
 `TaskStore.update()` is compare-and-swap. It rejects a stale
 `expectedVersion`, increments the version exactly once on commit, and applies
 only enumerable own string-keyed patch properties. `undefined` deletes a field.
 CAS protects the durable record; it does not route process-local worker effects.
+
+A store persists every field of `TaskRecord`, including internal ones it has no use for, through `create()`, `update()`, `get()` and, for a durable store, reopen or replay. Since the release after `0.3.0` that includes `unclaimedInputResponses`. A store that keeps a fixed list of the fields it knew earlier silently loses answers a client already gave, which is the loss the field exists to prevent; the conformance kit checks it on update, re-read and reopen. Both included stores keep whole records and needed no change.
 
 `WalTaskStore` compaction rewrites a snapshot of all live records before
 checkpointing and compacting old entries. Records already expired by its
@@ -289,16 +295,24 @@ The durable record may be shared, but a live worker's `AbortSignal` and the
 promise returned by `requestInput()` belong to that worker process. While the
 worker is alive, `tasks/update` and `tasks/cancel` must reach the same instance.
 After a crash, the application resumes from durable state; JavaScript
-continuations are not durable.
+continuations are not durable. Input responses that complete a round while no worker waits are part of that durable state, and a restarted worker claims them with `resumeInput()` ([input rounds](#input-rounds)).
 
 That process-local state is bounded by the task's life. A lifecycle releases
 what it holds for a task (the raised signal of a cancellation whose worker is
 not, or not yet, running here, and any parked waiter) when the task reaches a
 terminal state through it, when the task's TTL elapses by its clock, or on
-`close()`. Expiry is tracked from the record it last read or committed, so a
+`close()`. Expiry is tracked from the newest record it has read or committed, so a
 TTL revised by another instance is not seen; the worst case is that a signal
 raised here is dropped at the old expiry, before a worker that never read it
 starts.
+
+When a task's TTL elapses, the lifecycle also aborts the worker's signal, with the `TaskNotFoundError` the task now reads as everywhere else. The extension leaves this open on purpose: TTL bounds how long a task is retained and exposed, and whether the underlying work stops is server-defined (confirmed by a maintainer in [ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11)). Stopping is therefore an engine policy, and a narrow one:
+
+- It is cooperative. Nothing is killed; a worker that ignores the signal keeps running, and its next write throws `TaskNotFoundError`.
+- It is process-local. Only a worker in the process that tracks the expiry is told, by that lifecycle's clock, following any TTL revised through it. A worker whose write finds the task already gone in the store (the store's clock got there first) gets its signal aborted the same way.
+- Nothing is written and nothing is durable. There is no wire change and no new status; an expired task still reads as not found, and replay still discards it.
+- A signal already raised by `tasks/cancel` keeps its `TaskCancelled` reason. A parked `requestInput()` is rejected exactly once, with the same error, before the signal is aborted.
+- A signal that is read before the worker writes anything is armed by one pure read of the record, so a worker that only reads its signal is told too. Reading the signal of a task that is already gone yields a signal that is aborted as soon as that read answers. A task with `ttlMs: null` is never aborted this way.
 
 That affinity is the deployment model the extension itself defines. Its
 Streamable HTTP binding requires the client to set the `Mcp-Name` header to
@@ -465,7 +479,7 @@ question without a package change.
   upstream `draft` has diverged. It is run by hand and before a tag, not in CI.
 - The conformance kit runs against both included stores and deliberately broken
   stores (undefined ignored, `null` read as delete, dropped `error`, frozen
-  `lastUpdatedAt`, dropped fields, no CAS, live references), and works with any
+  `lastUpdatedAt`, dropped fields, fields unknown to an older field list dropped on write or on replay, no CAS, live references), and works with any
   clock origin the subject declares through `now()`. Optional clock and reopen capabilities are reported as real skips,
   never false passes.
 - Crash tests use child processes, explicit IPC commit points and real

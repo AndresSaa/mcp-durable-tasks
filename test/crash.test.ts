@@ -44,36 +44,29 @@ afterEach(() => {
  * distinction is the whole point: what survives here is what the kernel
  * already had, not what a shutdown hook managed to flush.
  */
-async function killDuring(
-  scenario: string,
-  dir: string,
-): Promise<{
+interface Announcement {
   taskId: string;
   committedVersion?: number;
   committedStatusMessage?: string;
   fillerTaskIds?: string[];
-}> {
-  const child = fork(CHILD, [dir, scenario], {
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
+  acknowledged?: unknown;
+  claimed?: unknown;
+}
+
+async function killDuring(
+  scenario: string,
+  dir: string,
+  taskId?: string,
+): Promise<Announcement> {
+  const child = fork(
+    CHILD,
+    [dir, scenario, ...(taskId === undefined ? [] : [taskId])],
+    { stdio: ["ignore", "pipe", "pipe", "ipc"] },
+  );
   children.push(child);
 
-  const announced = await new Promise<{
-    taskId: string;
-    committedVersion?: number;
-    committedStatusMessage?: string;
-    fillerTaskIds?: string[];
-  }>((resolve, reject) => {
-    child.once("message", (message) =>
-      resolve(
-        message as {
-          taskId: string;
-          committedVersion?: number;
-          committedStatusMessage?: string;
-          fillerTaskIds?: string[];
-        },
-      ),
-    );
+  const announced = await new Promise<Announcement>((resolve, reject) => {
+    child.once("message", (message) => resolve(message as Announcement));
     child.once("error", reject);
     child.once("exit", (code, signal) =>
       reject(
@@ -159,6 +152,45 @@ describe("crash recovery (I8)", () => {
         engine.handle(taskId).requestInput({
           "round-1-roots": { method: "roots/list" },
         }),
+      ).rejects.toMatchObject({ name: "DuplicateInputKeyError" });
+    });
+  });
+
+  it("keeps a reply that arrived with no worker across two crashes, until one restarted worker claims it", async () => {
+    const dir = freshDir();
+    // Process 1 parks the task and dies with its worker.
+    const { taskId } = await killDuring("input-required", dir);
+    // Process 2 has no worker; it acknowledges the reply and dies.
+    const answered = await killDuring("answer-without-worker", dir, taskId);
+    expect(answered.acknowledged).toEqual({ resultType: "complete" });
+
+    const answers = {
+      "round-1-roots": { roots: [] },
+      "round-1-elicit": { action: "accept", content: {} },
+    };
+    await reopen(dir, async (engine, store) => {
+      const view = await engine.getTask(taskId);
+      expect(view.status).toBe("working");
+      expect(view).not.toHaveProperty("unclaimedInputResponses");
+      expect((await store.get(taskId))?.unclaimedInputResponses).toEqual(
+        answers,
+      );
+    });
+
+    // Process 3 is the restarted worker: it claims the answers and dies.
+    const resumed = await killDuring("resume-input", dir, taskId);
+    expect(resumed.claimed).toEqual(answers);
+
+    // The claim was durable: nothing is handed out a second time, and the
+    // keys the first process issued are still spent (I5).
+    await reopen(dir, async (engine, store) => {
+      const handle = engine.handle(taskId);
+      await expect(handle.resumeInput()).resolves.toBeUndefined();
+      expect(await store.get(taskId)).not.toHaveProperty(
+        "unclaimedInputResponses",
+      );
+      await expect(
+        handle.requestInput({ "round-1-roots": { method: "roots/list" } }),
       ).rejects.toMatchObject({ name: "DuplicateInputKeyError" });
     });
   });

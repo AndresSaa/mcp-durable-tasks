@@ -359,6 +359,120 @@ describe("the kit catches stores that are wrong", () => {
   });
 });
 
+/**
+ * The fields a column-per-field store written against 0.3.0 would persist.
+ * Anything else, such as the later `unclaimedInputResponses`, is dropped.
+ */
+const FIELDS_KNOWN_IN_0_3 = new Set([
+  "taskId",
+  "status",
+  "statusMessage",
+  "createdAt",
+  "lastUpdatedAt",
+  "ttlMs",
+  "pollIntervalMs",
+  "inputRequests",
+  "inputResponses",
+  "usedInputKeys",
+  "result",
+  "error",
+  "version",
+]);
+
+function knownFieldsOnly(record: TaskRecord): TaskRecord {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => FIELDS_KNOWN_IN_0_3.has(key)),
+  ) as unknown as TaskRecord;
+}
+
+/**
+ * Correct in every other way, but drops the fields it does not know: on every
+ * write (`"write"`, a column-per-field table), or only when a reopened store
+ * replays its durable rows (`"replay"`, a serialiser with a fixed field list).
+ * `rows` is the durable backing that a reopen reads.
+ */
+function fieldDroppingStore(
+  where: "write" | "replay",
+  rows = new Map<string, TaskRecord>(),
+): TaskStore {
+  // A JSON round trip copies, and canonicalises -0 as the kit requires.
+  const copy = (record: TaskRecord) =>
+    JSON.parse(JSON.stringify(record)) as TaskRecord;
+  const persist = (record: TaskRecord) =>
+    where === "write" ? knownFieldsOnly(copy(record)) : copy(record);
+  const live = new Map<string, TaskRecord>(
+    [...rows].map(([taskId, row]) => [
+      taskId,
+      where === "replay" ? knownFieldsOnly(row) : row,
+    ]),
+  );
+  const lostRace = () => {
+    const error = new Error("stale");
+    error.name = "ConcurrentUpdateError";
+    return error;
+  };
+  return {
+    async create(record) {
+      if (live.has(record.taskId)) throw new Error("exists");
+      live.set(record.taskId, persist(record));
+      rows.set(record.taskId, persist(record));
+    },
+    async get(taskId) {
+      const found = live.get(taskId);
+      return found === undefined ? undefined : copy(found);
+    },
+    async update(taskId, patch: TaskPatch, expectedVersion) {
+      const current = live.get(taskId);
+      if (current?.version !== expectedVersion) throw lostRace();
+      const next: Record<string, unknown> = { ...current };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete next[key];
+        else next[key] = value;
+      }
+      next.version = current.version + 1;
+      const written = persist(next as unknown as TaskRecord);
+      live.set(taskId, written);
+      rows.set(taskId, written);
+      return copy(written);
+    },
+    async sweep() {
+      return 0;
+    },
+    async close() {},
+  };
+}
+
+describe("the kit catches a store that drops record fields it does not know", () => {
+  it("fails a store that keeps only the 0.3.0 fields on write", async () => {
+    const report = await checkTaskStore("known fields only", () =>
+      fieldDroppingStore("write"),
+    );
+    expect(report.ok).toBe(false);
+    const failed = report.outcomes
+      .filter((outcome) => outcome.status === "failed")
+      .map((outcome) => outcome.name)
+      .join(" | ");
+    expect(failed).toMatch(/every field/i);
+    expect(failed).toMatch(/unclaimed input responses/i);
+  });
+
+  it("fails a store that drops them on replay", async () => {
+    const report = await checkTaskStore("replay drops unknown fields", () => {
+      const rows = new Map<string, TaskRecord>();
+      return {
+        store: fieldDroppingStore("replay", rows),
+        reopen: () => fieldDroppingStore("replay", rows),
+      };
+    });
+    const failed = report.outcomes
+      .filter((outcome) => outcome.status === "failed")
+      .map((outcome) => outcome.name);
+    expect(failed).toEqual([
+      expect.stringMatching(/unclaimed input responses .* reopen/i),
+    ]);
+  });
+});
+
 describe("the kit works with any clock origin the subject can advance", () => {
   const origins = [
     ["the wall clock", () => Date.now()],

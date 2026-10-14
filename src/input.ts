@@ -242,37 +242,38 @@ function isToolAnnotations(value: unknown): boolean {
   );
 }
 
+/**
+ * A tool's `inputSchema` or `outputSchema`: any JSON Schema object, whose
+ * `$schema`, when present, is a string in both the generated schema and
+ * `spec.types.ts`.
+ */
+function isToolSchema(value: unknown): value is Record<string, unknown> {
+  return (
+    isObject(value) &&
+    isOptional(value, "$schema", (entry) => typeof entry === "string")
+  );
+}
+
 function isSamplingTool(value: unknown): boolean {
   return (
     isObject(value) &&
     typeof value.name === "string" &&
-    isObject(value.inputSchema) &&
+    isToolSchema(value.inputSchema) &&
     value.inputSchema.type === "object" &&
     isOptional(value, "title", (entry) => typeof entry === "string") &&
     isOptional(value, "description", (entry) => typeof entry === "string") &&
     // Any JSON Schema object: unlike `inputSchema`, the 2026-07-28 `Tool` does
     // not require `type: "object"` at the root of `outputSchema`.
-    isOptional(value, "outputSchema", isObject) &&
+    isOptional(value, "outputSchema", isToolSchema) &&
     isOptional(value, "annotations", isToolAnnotations) &&
     isOptional(
       value,
       "icons",
       (entry) => Array.isArray(entry) && entry.every(isIcon),
     ) &&
-    isOptional(
-      value,
-      "execution",
-      (entry) =>
-        isObject(entry) &&
-        isOptional(
-          entry,
-          "taskSupport",
-          (support) =>
-            support === "required" ||
-            support === "optional" ||
-            support === "forbidden",
-        ),
-    ) &&
+    // No rule for `execution`: it is a 2025-11-25 field that the 2026-07-28
+    // Tool does not define, so like any other unlisted member it is accepted
+    // as whatever JSON value it holds (the caller checked the whole tree).
     isOptional(value, "_meta", isObject)
   );
 }

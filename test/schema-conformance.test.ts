@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   MemoryTaskStore,
@@ -602,12 +603,13 @@ function expectClosed(view: Record<string, unknown>) {
 
 describe("the wire projection is closed", () => {
   const stamp = "2026-07-28T00:00:00.000Z";
-  // Every status, each record also carrying the three internal fields a
-  // correct store keeps plus one field nobody has listed yet. The stable
-  // schema accepts all of them (see above); the projection must not.
+  // Every status, each record also carrying the internal fields a correct
+  // store keeps plus one field nobody has listed yet. The stable schema
+  // accepts all of them (see above); the projection must not.
   const internals = {
     version: 3,
     usedInputKeys: ["a"],
+    unclaimedInputResponses: { a: { roots: [] } },
     futureInternalField: "must never reach the wire",
   };
   const records: [string, Record<string, unknown>][] = [
@@ -649,6 +651,7 @@ describe("the wire projection is closed", () => {
         "version",
         "usedInputKeys",
         "inputResponses",
+        "unclaimedInputResponses",
         "futureInternalField",
       ]) {
         expect(view, key).not.toHaveProperty(key);
@@ -657,6 +660,49 @@ describe("the wire projection is closed", () => {
       await lifecycle.close();
     },
   );
+
+  // Unclaimed input responses are the one internal field that holds client
+  // data, so their absence from the wire is also checked as a property: any
+  // status, any keys (prototype names included), any number of answers.
+  it("never projects unclaimedInputResponses, for any status or content", async () => {
+    const statuses = fc.constantFrom(...records.map(([, fields]) => fields));
+    const responses = fc.dictionary(
+      fc.oneof(
+        fc.constantFrom("__proto__", "toString", "constructor"),
+        fc.string({ maxLength: 8 }),
+      ),
+      fc.constantFrom<Record<string, unknown>>(
+        { roots: [] },
+        { action: "decline" },
+        { model: "m", role: "assistant", content: { type: "text", text: "" } },
+      ),
+      { maxKeys: 4 },
+    );
+    await fc.assert(
+      fc.asyncProperty(statuses, responses, async (fields, unclaimed) => {
+        const store = new MemoryTaskStore();
+        await store.create({
+          taskId: "t",
+          createdAt: stamp,
+          lastUpdatedAt: stamp,
+          ttlMs: null,
+          version: 0,
+          unclaimedInputResponses: unclaimed,
+          ...fields,
+        } as unknown as TaskRecord);
+        const lifecycle = new TaskLifecycle({ store, sweepIntervalMs: null });
+        const view = (await lifecycle.getTask("t")) as unknown as Record<
+          string,
+          unknown
+        >;
+        expectClosed(view);
+        expect(view).not.toHaveProperty("unclaimedInputResponses");
+        expect(JSON.stringify(view)).not.toContain("unclaimedInputResponses");
+        await lifecycle.close();
+      }),
+      { numRuns: 100 },
+    );
+  });
 
   it("keeps CreateTaskResult to the base task, with no status payloads", async () => {
     const lifecycle = engine();
@@ -1019,36 +1065,6 @@ describe("where the generated schema is narrower than its TypeScript source", ()
   });
 });
 
-describe("divergences pinned for a decision, not deliberate", () => {
-  // Found while aligning the three shapes fixed in section 5 and left as they
-  // were, because changing them was outside that change's scope. Pinned so
-  // whichever way they are decided, the change is visible here
-  // (docs/contract.md#input-rounds).
-  const withTool = (tool: Record<string, unknown>) =>
-    sampling({
-      messages: [{ role: "user", content: TEXT }],
-      maxTokens: 1,
-      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
-    });
-
-  it("refuses an unknown tool execution.taskSupport (an SDK 1.30.0 field 2026-07-28 Tool does not define)", () => {
-    const request = withTool({ execution: { taskSupport: "sometimes" } });
-    expect(isInputRequest(request)).toBe(false);
-    conforms("InputRequest", request);
-  });
-
-  it("accepts a non-string `$schema` in a tool schema, which the schema rejects", () => {
-    for (const tool of [
-      { inputSchema: { type: "object", $schema: 7 } },
-      { outputSchema: { $schema: 7 } },
-    ]) {
-      const request = withTool(tool);
-      expect(isInputRequest(request)).toBe(true);
-      violates("InputRequest", request);
-    }
-  });
-});
-
 /* == 5. Engine defects found by this validation ========================= */
 
 // Found by validating engine output against the stable schema. A defect that
@@ -1108,17 +1124,16 @@ describe("fixed: integer milliseconds are enforced at the API", () => {
     ));
 });
 
-describe("KNOWN DEFECT: fail() does not require a JSON-RPC error", () => {
-  it.fails("fail() with an object that has no code or message", () =>
+describe("fixed: fail() requires a JSON-RPC error", () => {
+  it("fail() with an object that has no code or message", () =>
     neverEmitsNonConforming((l) =>
+      // @ts-expect-error -- refused by the type as well as at runtime
       afterHandle(l, (h) => h.fail({ reason: "x" })),
-    ),
-  );
-  it.fails("fail() with a fractional error code", () =>
+    ));
+  it("fail() with a fractional error code", () =>
     neverEmitsNonConforming((l) =>
       afterHandle(l, (h) => h.fail({ code: 1.5, message: "m" })),
-    ),
-  );
+    ));
 });
 
 describe("fixed: progress() checks statusMessage at runtime", () => {
@@ -1207,6 +1222,124 @@ describe("fixed: a form elicitation's requestedSchema.$schema must be a string",
       expect(isInputRequest(request)).toBe(true);
       conforms("InputRequest", request);
     }
+  });
+});
+
+describe("fixed: a sampling tool's schema `$schema` must be a string", () => {
+  // Both the generated schema and spec.types.ts (`$schema?: string` on
+  // `inputSchema` and `outputSchema`) type it as a string, like
+  // `requestedSchema.$schema` above.
+  const withTool = (tool: Record<string, unknown>) =>
+    sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
+    });
+
+  it("refuses a non-string `$schema` in a tool schema, as both definitions do", () => {
+    for (const $schema of [7, null, {}, ["x"], true]) {
+      for (const tool of [
+        { inputSchema: { type: "object", $schema } },
+        { outputSchema: { $schema } },
+      ]) {
+        const request = withTool(tool);
+        expect(isInputRequest(request)).toBe(false);
+        violates("InputRequest", request);
+      }
+    }
+    expect(fixture("spec.types.ts")).toContain(
+      'inputSchema: { $schema?: string; type: "object"; [key: string]: unknown };',
+    );
+    expect(fixture("spec.types.ts")).toContain(
+      "outputSchema?: { $schema?: string; [key: string]: unknown };",
+    );
+  });
+
+  it("still accepts a string `$schema`, and one that is absent", () => {
+    const draft = "https://json-schema.org/draft/2020-12/schema";
+    for (const tool of [
+      { inputSchema: { type: "object", $schema: draft } },
+      { outputSchema: { $schema: draft, type: "string" } },
+      { outputSchema: { type: "object" } },
+    ]) {
+      const request = withTool(tool);
+      expect(isInputRequest(request)).toBe(true);
+      conforms("InputRequest", request);
+    }
+  });
+
+  it("requestInput() refuses it and leaves the task working", async () => {
+    const lifecycle = engine();
+    const { taskId } = await lifecycle.createTask();
+    const request = withTool({
+      inputSchema: { type: "object", $schema: 7 },
+    }) as InputRequest;
+    await expect(
+      lifecycle.handle(taskId).requestInput({ k: request }),
+    ).rejects.toBeInstanceOf(TypeError);
+    const view = await lifecycle.getTask(taskId);
+    expect(view.status).toBe("working");
+    conformsAsGetResult(view);
+    await lifecycle.close();
+  });
+});
+
+describe("fixed: a sampling tool's `execution` is not validated beyond JSON", () => {
+  // `execution.taskSupport` is a 2025-11-25 (SDK 1.30.0) Tool field. The
+  // 2026-07-28 Tool defines no `execution` member, in neither schema.json nor
+  // spec.types.ts, and the extension specification makes the server the sole
+  // decider of task augmentation per request. The open schema accepts any
+  // value there, so the engine must not refuse one.
+  const withTool = (tool: Record<string, unknown>) =>
+    sampling({
+      messages: [{ role: "user", content: TEXT }],
+      maxTokens: 1,
+      tools: [{ name: "t", inputSchema: { type: "object" }, ...tool }],
+    });
+
+  it("the 2026-07-28 Tool does not define it", () => {
+    expect(defs.Tool!.properties).not.toHaveProperty("execution");
+    expect(fixture("spec.types.ts")).not.toMatch(/taskSupport|execution\?:/);
+  });
+
+  it.each<[string, unknown]>([
+    ["an SDK 1.30.0 value", { taskSupport: "optional" }],
+    ["an unknown taskSupport", { taskSupport: "sometimes" }],
+    ["a non-string taskSupport", { taskSupport: 1 }],
+    ["other members", { mode: "background", nested: { a: [1] } }],
+    ["a string", "deferred"],
+    ["an array", ["x"]],
+    ["null", null],
+  ])("accepts %s, as the open schema does", (_name, execution) => {
+    const request = withTool({ execution });
+    expect(isInputRequest(request)).toBe(true);
+    conforms("InputRequest", request);
+  });
+
+  it("keeps it unchanged on the stored request", async () => {
+    const lifecycle = engine();
+    const { taskId } = await lifecycle.createTask();
+    const execution = { taskSupport: "sometimes", extra: [1, "two"] };
+    const parked = lifecycle
+      .handle(taskId)
+      .requestInput({ k: withTool({ execution }) as InputRequest });
+    void parked.catch(() => undefined);
+    const view = await untilParked(lifecycle, taskId);
+    conformsAsGetResult(view);
+    const stored = (
+      view as unknown as {
+        inputRequests: {
+          k: { params: { tools: { execution: unknown }[] } };
+        };
+      }
+    ).inputRequests.k.params.tools[0]!.execution;
+    expect(stored).toEqual(execution);
+    await lifecycle.close();
+  });
+
+  it("still refuses a value that is not JSON", () => {
+    const request = withTool({ execution: { taskSupport: () => "optional" } });
+    expect(isInputRequest(request)).toBe(false);
   });
 });
 

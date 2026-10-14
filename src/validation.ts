@@ -58,6 +58,25 @@ export function assertCompactEvery(value: unknown): void {
   }
 }
 
+/**
+ * A failed task's `error` is a JSON-RPC error object in the stable schema
+ * (`$defs/Error`): an integer `code` and a string `message` are required,
+ * `data` is any value, and further members are allowed because the schema is
+ * open. JSON-RPC 2.0 itself requires the code to be an integer, which is why
+ * this does not follow `spec.types.ts`'s looser `code: number`. The value has
+ * already been checked to be a plain JSON object.
+ */
+export function assertJsonRpcError(
+  value: Record<string, unknown>,
+  source: string,
+): void {
+  if (!Number.isInteger(value.code) || typeof value.message !== "string") {
+    throw new TypeError(
+      `${source} must be a JSON-RPC error object with an integer code and a string message`,
+    );
+  }
+}
+
 /** Only reachable from untyped JavaScript; TypeScript already requires it. */
 export function assertStatusMessage(value: string, source: string): void {
   if (typeof value !== "string") {
