@@ -175,6 +175,44 @@ When a document turns out to be wrong, fix it and say so plainly in the commit
 body. Two of this package's better design decisions came from correcting the
 contract; that only works if the correction is written down.
 
+## Write less, in plain words
+
+Everything written here is read by a person with limited time: PR bodies,
+commit bodies, the changelog, `docs/`, the README. More text is not more rigor.
+The repository already holds over 200 KB of prose, and most of it is read
+once. Shorter text is cheaper to review and to keep true, so every agent
+(including one you delegate to: put these rules in its brief) follows these
+limits.
+
+- **Say it once, where it belongs.** Each fact lives in one document; the
+  others link to it. Do not repeat a decision in the contract, the plan, the
+  changelog and the PR. Update the text in place instead of appending a
+  history of what changed.
+- **PR body:** what changed and why, in a few bullets or a short paragraph,
+  roughly 150 words. No test counts, coverage numbers or file lists (CI and the
+  diff show them). Put a limitation the reader must know in one sentence.
+- **Commit body:** the reason, not a tour of the diff. Often one or two
+  sentences. The subject carries the rest.
+- **Changelog entry:** one to three sentences, written for the person
+  upgrading: what they will notice and what to do. Implementation reasoning
+  belongs in the contract or the code.
+- **Docs:** describe what is true now, not how we got there. A fact that did
+  not change what a reader should do is not documented. Prefer a short example
+  to an abstract paragraph. If a section can be cut without losing a decision
+  or a guarantee, cut it.
+- **Plain words.** Write for a developer who has not read this repository.
+  Prefer common words and short sentences; "stops" over "terminates the
+  cooperative lifecycle". Use an identifier or a spec term when it is the
+  exact thing (`ttlMs`, `input_required`); explain a term of our own once, or
+  link its definition. Do not stack qualifiers, and drop filler such as
+  "importantly", "note that" and "in order to".
+- **Precision is not length.** The contract stays exact, with a short rule per
+  line. If a sentence needs three clauses to be correct, split it rather than
+  adding more.
+
+When a draft is done, cut it by a third and check that nothing the reader needs
+is missing. When in doubt, shorter wins.
+
 ## Stop and ask for an audit when the change is large
 
 An independent audit of the engine found ten real defects, six of which lost or
