@@ -6,6 +6,7 @@ import {
 } from "../src/index.js";
 import { MAX_TIMER_MS } from "../src/validation.js";
 import {
+  CONFIRM_TIMEOUT_MS,
   RETRY_FIRST_MS,
   RETRY_MAX_MS,
   WorkerCoordinator,
@@ -513,6 +514,38 @@ describe("a signal read before any commit", () => {
     await elapse(RETRY_FIRST_MS);
     expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
     expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("gives up on a read that does not answer in time, and retries", async () => {
+    const { workers, signal, settled, calls } = await expiring((call) =>
+      call === 2 ? new Promise(() => undefined) : Promise.resolve(undefined),
+    );
+    await elapse(CONFIRM_TIMEOUT_MS - 1);
+    expect(calls()).toBe(2);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+
+    await elapse(1 + RETRY_FIRST_MS);
+    expect(calls()).toBe(3);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("still acts on a late answer to a read it gave up on", async () => {
+    let late!: (value: TaskRecord | undefined) => void;
+    const { workers, signal } = await expiring((call) =>
+      call === 2
+        ? new Promise((resolve) => (late = resolve))
+        : new Promise(() => undefined),
+    );
+    await elapse(CONFIRM_TIMEOUT_MS);
+    late(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   const failing = () => Promise.reject(new Error("store unavailable"));

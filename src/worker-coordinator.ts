@@ -4,6 +4,8 @@ import type { InputResponses, TaskRecord } from "./types.js";
 import { MAX_TIMER_MS } from "./validation.js";
 import { isTerminal } from "./wire.js";
 
+/** How long an expiry re-check read may take before it counts as unknown. */
+export const CONFIRM_TIMEOUT_MS = 5_000;
 /** The first delay before an unknown re-check is read again; it doubles. */
 export const RETRY_FIRST_MS = 1_000;
 /** The longest delay between re-check reads. */
@@ -281,9 +283,10 @@ export class WorkerCoordinator {
    * elapsed by this clock; otherwise it is tracked again from that record.
    * Without a lookup, it is released.
    *
-   * A read that fails or throws decides nothing: the task may be alive and
-   * revised elsewhere. It is read again after a delay that doubles from
-   * `RETRY_FIRST_MS` up to `RETRY_MAX_MS`.
+   * A read that fails, throws or does not answer within `CONFIRM_TIMEOUT_MS`
+   * decides nothing: the task may be alive and revised elsewhere. It is read
+   * again after a delay that doubles from `RETRY_FIRST_MS` up to
+   * `RETRY_MAX_MS`. A late answer still counts.
    */
   #confirmExpiry(taskId: string, expiry: Expiry, attempt = 0): void {
     const current = () =>
@@ -309,6 +312,7 @@ export class WorkerCoordinator {
       retry();
       return;
     }
+    this.#later(expiry, CONFIRM_TIMEOUT_MS, retry);
     pending.then((record) => {
       if (!current()) return;
       if (record === undefined || hasExpired(record, this.#now())) {

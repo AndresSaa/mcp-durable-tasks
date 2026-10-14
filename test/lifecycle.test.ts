@@ -1923,6 +1923,21 @@ describe("the worker signal at TTL expiry", () => {
     await engine.close();
   });
 
+  it("aborts the signal of an expired task even if one re-check read never answers", async () => {
+    const { engine, store, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    await vi.advanceTimersByTimeAsync(0);
+    vi.spyOn(store, "get").mockReturnValueOnce(new Promise(() => undefined));
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    await elapse(time, 10_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
   it("never aborts a signal whose TTL another lifecycle removed", async () => {
     const { engine, store, time } = build();
     const other = new TaskLifecycle({
