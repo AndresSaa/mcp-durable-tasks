@@ -286,6 +286,24 @@ export interface JsonObject {
 }
 
 /**
+ * The JSON-RPC error that ends a failed task, as {@linkcode TaskHandle.fail}
+ * accepts it. The stable schema's `Error` requires an integer `code` and a
+ * string `message`; its `data` is any value the sender defines, which a
+ * stored task narrows to JSON. `code` is `number` as in `spec.types.ts`, and
+ * `fail()` additionally refuses a non-integer at runtime.
+ *
+ * A type alias rather than an interface so that it stays assignable to
+ * {@linkcode JsonObject}. Records and the wire keep `error: JsonObject`,
+ * because stored records are not revalidated: a log written before `fail()`
+ * checked its argument may hold any JSON object there.
+ */
+export type TaskError = {
+  code: number;
+  message: string;
+  data?: JsonValue;
+};
+
+/**
  * What a {@linkcode TaskStore} persists.
  *
  * **This is not the wire shape.** `version`, `inputResponses` and
@@ -473,9 +491,11 @@ export interface TaskHandle {
   /**
    * Terminal. Carries the JSON-RPC error that ended the task: an integer
    * `code` and a string `message` are required, `data` is optional. Anything
-   * else throws `TypeError` and nothing is written.
+   * else throws `TypeError` and nothing is written. Further JSON members are
+   * kept if present, as the open schema allows, but the type does not invite
+   * them.
    */
-  fail(error: JsonObject): Promise<void>;
+  fail(error: TaskError): Promise<void>;
 
   /**
    * Terminal. Acknowledges a cancellation the worker chose to honour.

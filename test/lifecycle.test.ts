@@ -9,6 +9,7 @@ import {
   TaskLifecycle,
   TaskNotFoundError,
   type InputRequest,
+  type TaskError,
   type TaskRecord,
   type TaskStore,
 } from "../src/index.js";
@@ -964,6 +965,34 @@ describe("argument checking", () => {
     await expect(engine.getTask(taskId)).resolves.toMatchObject({
       status: "failed",
       error,
+    });
+    await engine.close();
+  });
+
+  // The parameter type says what the runtime check enforces, so `tsc` (run by
+  // `pnpm lint`) catches a looser object before it reaches the engine.
+  it("types fail()'s parameter as a JSON-RPC error", async () => {
+    const { engine } = build();
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const valid: TaskError = { code: -32000, message: "m", data: [1, "x"] };
+
+    const refused = [
+      // @ts-expect-error -- no code or message
+      () => handle.fail({ reason: "x" }),
+      // @ts-expect-error -- missing message
+      () => handle.fail({ code: 1 }),
+      // @ts-expect-error -- message must be a string
+      () => handle.fail({ code: 1, message: 2 }),
+      // @ts-expect-error -- data must be JSON
+      () => handle.fail({ code: 1, message: "m", data: new Date() }),
+    ];
+    for (const call of refused) {
+      await expect(call()).rejects.toBeInstanceOf(TypeError);
+    }
+    await handle.fail(valid);
+    await expect(engine.getTask(taskId)).resolves.toMatchObject({
+      error: valid,
     });
     await engine.close();
   });

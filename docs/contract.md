@@ -137,11 +137,7 @@ may still complete or fail if work wins the race.
 - The stable schema types a failed task's `error` as a JSON-RPC error object:
   an integer `code` and a string `message` are required, `data` is optional
   and may be any JSON value, and further members are allowed because the
-  schema is open. `fail()` enforces the two required members and throws
-  `TypeError` otherwise, after the plain-JSON check and before anything is
-  written. The code must be an integer although `spec.types.ts` declares
-  `code: number`: JSON-RPC 2.0 itself requires an integer, and the generated
-  schema says so too. Records already stored with any other `error` follow
+  schema is open. `fail()` takes the exported `TaskError` type, `{ code: number; message: string; data?: JsonValue }`, enforces the two required members at runtime and throws `TypeError` otherwise, after the plain-JSON check and before anything is written. The code must be an integer although `spec.types.ts` declares `code: number`: JSON-RPC 2.0 itself requires an integer, and the generated schema says so too. `data` is `unknown` in `spec.types.ts`; a stored task narrows it to JSON. The record and wire types keep `error: JsonObject`. Records already stored with any other `error` follow
   the rule for stored records below; because a failed task is terminal,
   nothing can revise such an error, and it is served unchanged until the
   task's TTL elapses.

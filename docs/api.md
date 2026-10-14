@@ -190,12 +190,7 @@ async function work(task: TaskHandle) {
 | `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
 | `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour         |
 
-¹ The stable schema requires that shape for a failed task's `error`. `data` is
-optional and may be any JSON value, and other members are kept. A missing or
-non-integer `code`, or a missing or non-string `message`, throws `TypeError`
-and nothing is written. A log written before this check may hold a failed
-task with some other `error`; it still opens and serves that error unchanged
-([contract](contract.md#wire-contract)).
+¹ The stable schema requires that shape for a failed task's `error`. The parameter is typed as the exported `TaskError`, `{ code: number; message: string; data?: JsonValue }`. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and nothing is written, which also covers untyped JavaScript. Other JSON members that reach it anyway are kept, because the schema is open. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`: a log written before this check may hold a failed task with some other `error`, and it still opens and serves that error unchanged ([contract](contract.md#wire-contract)).
 
 ² Both hints follow the same rules as in `createTask()`: whole milliseconds in
 the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value

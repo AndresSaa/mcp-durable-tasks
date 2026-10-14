@@ -4,6 +4,7 @@ import type {
   InputRequest,
   InputResponses,
   JsonObject,
+  TaskError,
   TaskHandle,
   TaskPatch,
   TaskRecord,
@@ -104,7 +105,7 @@ export function createTaskHandle(
       }));
     },
 
-    async fail(error: JsonObject) {
+    async fail(error: TaskError) {
       const normalized = normalizeJsonObject(error, "fail");
       assertJsonRpcError(normalized, "fail() error");
       await writer.mutate(taskId, () => ({

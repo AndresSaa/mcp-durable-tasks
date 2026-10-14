@@ -20,8 +20,8 @@ either is a major version.
   object was stored, and every `tasks/get` for that task then failed schema
   validation. A WAL written before this change still opens unchanged: a
   stored non-conforming `error` is served as is until the task expires, since
-  a failed task cannot be written again. The parameter type is unchanged.
-  Listed as a known issue in `0.3.0`.
+  a failed task cannot be written again. Listed as a known issue in `0.3.0`.
+- **Breaking (types):** `TaskHandle.fail()` now takes the new exported `TaskError` type, `{ code: number; message: string; data?: JsonValue }`, instead of any `JsonObject`, so the compiler refuses what the runtime check above refuses. An object literal without `code` or `message`, or with extra members, no longer compiles. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`, since stored records are not revalidated.
 - **Breaking:** a sampling tool whose `inputSchema.$schema` or
   `outputSchema.$schema` is present but not a string is now refused by
   `requestInput()` with `TypeError`, and nothing is written. Both the stable

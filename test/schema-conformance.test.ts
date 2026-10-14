@@ -1081,6 +1081,7 @@ describe("fixed: integer milliseconds are enforced at the API", () => {
 describe("fixed: fail() requires a JSON-RPC error", () => {
   it("fail() with an object that has no code or message", () =>
     neverEmitsNonConforming((l) =>
+      // @ts-expect-error -- refused by the type as well as at runtime
       afterHandle(l, (h) => h.fail({ reason: "x" })),
     ));
   it("fail() with a fractional error code", () =>
