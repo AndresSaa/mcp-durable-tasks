@@ -4,7 +4,13 @@ import {
   TaskNotFoundError,
   type TaskRecord,
 } from "../src/index.js";
-import { WorkerCoordinator } from "../src/worker-coordinator.js";
+import { MAX_TIMER_MS } from "../src/validation.js";
+import {
+  CONFIRM_TIMEOUT_MS,
+  RETRY_FIRST_MS,
+  RETRY_MAX_MS,
+  WorkerCoordinator,
+} from "../src/worker-coordinator.js";
 
 // Process-local bookkeeping must be bounded by the life of the tasks it
 // tracks. Sizes are read directly from the coordinator, so these tests do not
@@ -367,6 +373,261 @@ describe("a signal read before any commit", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(signal.aborted).toBe(false);
     expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("re-checks the store at expiry and follows a TTL revised elsewhere", async () => {
+    const records = new Map([["t", record("t", 1_000)]]);
+    const lookup = lookupOf(records);
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    // Another instance extends the TTL; this one never sees the commit.
+    records.set("t", { ...record("t", 5_000), version: 4 });
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    current += 4_000;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps a timer longer than setTimeout allows split, and re-checks only at the end", async () => {
+    const ttlMs = 3 * MAX_TIMER_MS;
+    const lookup = lookupOf(new Map([["t", record("t", ttlMs)]]));
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let step = 0; step < 2; step += 1) {
+      current += MAX_TIMER_MS;
+      await vi.advanceTimersByTimeAsync(MAX_TIMER_MS);
+      expect(vi.getTimerCount()).toBe(1);
+    }
+    expect(lookup).toHaveBeenCalledTimes(1);
+    current += MAX_TIMER_MS;
+    await vi.advanceTimersByTimeAsync(MAX_TIMER_MS);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  async function elapse(ms: number) {
+    current += ms;
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  /** A held signal and a parked waiter, past expiry, with a scripted store. */
+  async function expiring(
+    answer: (call: number) => Promise<TaskRecord | undefined>,
+  ) {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(record(taskId, 1_000));
+      return answer(calls);
+    });
+    const signal = workers.signalFor("t");
+    const registration = workers.register("t", ["a"]);
+    const settled = vi.fn();
+    registration.promise.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await elapse(1_000);
+    return { workers, signal, settled, calls: () => calls };
+  }
+
+  it("keeps the signal and the waiter when the re-check read fails, and retries", async () => {
+    const { workers, signal, settled, calls } = await expiring(async (call) => {
+      if (call <= 4) throw new Error("store unavailable");
+      return record("t", 1_000);
+    });
+    expect(calls()).toBe(2);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(workers.trackedTasks).toBe(1);
+
+    // Retries wait 1 s, 2 s, 4 s: the delay doubles after each failure.
+    await elapse(RETRY_FIRST_MS);
+    expect(calls()).toBe(3);
+    await elapse(2 * RETRY_FIRST_MS);
+    expect(calls()).toBe(4);
+    await elapse(4 * RETRY_FIRST_MS - 1);
+    expect(calls()).toBe(4);
+    expect(signal.aborted).toBe(false);
+    await elapse(1);
+
+    // The store answers at last, and the stored TTL has elapsed.
+    expect(calls()).toBe(5);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("caps the retry delay", async () => {
+    const { calls } = await expiring(() =>
+      Promise.reject(new Error("store unavailable")),
+    );
+    let delay = RETRY_FIRST_MS;
+    while (delay < RETRY_MAX_MS) {
+      await elapse(delay);
+      delay *= 2;
+    }
+    const before = calls();
+    await elapse(RETRY_MAX_MS);
+    await elapse(RETRY_MAX_MS);
+    expect(calls()).toBe(before + 2);
+  });
+
+  it("follows a live record once a retried read answers", async () => {
+    const { workers, signal, settled } = await expiring(async (call) => {
+      if (call === 2) throw new Error("store unavailable");
+      return { ...record("t", 60_000), version: 5 };
+    });
+    await elapse(RETRY_FIRST_MS);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await elapse(60_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("treats a read that throws synchronously like a failed one", async () => {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 2) throw new Error("store closed");
+      return Promise.resolve(record(taskId, 1_000));
+    });
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    await elapse(1_000);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+
+    await elapse(RETRY_FIRST_MS);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("gives up on a read that does not answer in time, and retries", async () => {
+    const { workers, signal, settled, calls } = await expiring((call) =>
+      call === 2 ? new Promise(() => undefined) : Promise.resolve(undefined),
+    );
+    await elapse(CONFIRM_TIMEOUT_MS - 1);
+    expect(calls()).toBe(2);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+
+    await elapse(1 + RETRY_FIRST_MS);
+    expect(calls()).toBe(3);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("still acts on a late answer to a read it gave up on", async () => {
+    let late!: (value: TaskRecord | undefined) => void;
+    const { workers, signal } = await expiring((call) =>
+      call === 2
+        ? new Promise((resolve) => (late = resolve))
+        : new Promise(() => undefined),
+    );
+    await elapse(CONFIRM_TIMEOUT_MS);
+    late(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  const failing = () => Promise.reject(new Error("store unavailable"));
+
+  it("drops a pending retry when a newer commit is observed", async () => {
+    const { workers, signal } = await expiring(failing);
+    expect(vi.getTimerCount()).toBe(1);
+    workers.observe({ ...record("t", null), version: 2 });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("keeps the entry while the store keeps failing, until the task ends", async () => {
+    const { workers } = await expiring(failing);
+    await elapse(10 * RETRY_MAX_MS);
+    expect(workers.trackedTasks).toBe(1);
+    workers.observe({ ...record("t", 1_000), status: "failed" });
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drops a pending retry on close()", async () => {
+    const { workers, calls } = await expiring(failing);
+    workers.close(new Error("closed"));
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    await elapse(RETRY_MAX_MS);
+    expect(calls()).toBe(2);
+  });
+
+  it("keeps a cancellation's reason while the re-check read keeps failing", async () => {
+    let calls = 0;
+    const workers = new WorkerCoordinator(now, () => {
+      calls += 1;
+      return calls < 3
+        ? Promise.reject(new Error("store unavailable"))
+        : Promise.resolve(undefined);
+    });
+    const signal = workers.signalFor("t");
+    workers.abort("t", new TaskCancelled("t"), record("t", 1_000));
+    await elapse(1_000);
+    expect(workers.trackedTasks).toBe(1);
+
+    await elapse(RETRY_FIRST_MS);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("ignores a re-check answer once a newer commit was observed", async () => {
+    let calls = 0;
+    let answer!: (value: TaskRecord | undefined) => void;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(record(taskId, 1_000));
+      return new Promise((resolve) => (answer = resolve));
+    });
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    workers.observe({ ...record("t", null), version: 2 });
+    answer(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("stays bounded across 20,000 re-checked expiries", async () => {
+    const workers = new WorkerCoordinator(now, async () => undefined);
+    const signals = Array.from({ length: 20_000 }, (_, index) => {
+      const taskId = `t${index}`;
+      const signal = workers.signalFor(taskId);
+      workers.observe({ ...record(taskId, 1_000), version: 1 });
+      return signal;
+    });
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does nothing once closed", async () => {

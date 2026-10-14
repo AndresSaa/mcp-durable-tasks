@@ -121,7 +121,7 @@ The left column is tested. `test/crash.test.ts` starts real child processes, kil
 - A progress version that was acknowledged is never lost, even if the process is killed during later writes.
 - A confirmed snapshot of several tasks survives a kill during compaction.
 
-The worker's suspended `requestInput()` call does not survive a restart, but the answers do. A restarted worker calls `task.resumeInput()` first. It returns the responses that arrived while no worker was waiting, exactly once, or `undefined`. If the client has not answered yet, the reply is kept the same way when it arrives, so the worker can call `resumeInput()` again later, or ask again with new keys; the old keys stay spent ([durability](docs/durability.md#what-durability-does-not-cover)).
+The worker's suspended `requestInput()` call does not survive a restart, but the answers do. A restarted worker calls `task.resumeInput()` first. It returns the responses that arrived while no worker was waiting, at most once, or `undefined`; if the process dies after the claim, they are gone. If the client has not answered yet, the reply is kept the same way when it arrives, so the worker can call `resumeInput()` again later, or ask again with new keys; the old keys stay spent ([durability](docs/durability.md#what-durability-does-not-cover)).
 
 A fast-check state-machine model backs these examples: random schedules of progress, TTL changes, clock rollbacks, input responses, cancellation and CAS conflicts, compared against an independent reference after every step.
 

@@ -11,6 +11,7 @@ import {
   type InputRequest,
   type TaskError,
   type TaskHandle,
+  type TaskPatch,
   type TaskRecord,
   type TaskStore,
 } from "../src/index.js";
@@ -88,6 +89,73 @@ async function untilParked(engine: TaskLifecycle, taskId: string) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`task ${taskId} never reached input_required`);
+}
+
+/**
+ * A MemoryTaskStore that can hold back its next get(), or the return of its
+ * next update() after the update has committed, so a test can place another
+ * operation exactly inside that gap.
+ */
+class GatedStore implements TaskStore {
+  readonly inner = new MemoryTaskStore();
+  #getGate: Promise<void> | undefined;
+  #updateGate: Promise<void> | undefined;
+  #updateFailure: Error | undefined;
+
+  /** The next update throws this error and writes nothing. */
+  failNextUpdate(error: Error): void {
+    this.#updateFailure = error;
+  }
+
+  holdNextGet(): () => void {
+    let release!: () => void;
+    this.#getGate = new Promise((resolve) => (release = resolve));
+    return release;
+  }
+
+  /** The update commits at once; only its return is held. */
+  holdNextUpdate(): () => void {
+    let release!: () => void;
+    this.#updateGate = new Promise((resolve) => (release = resolve));
+    return release;
+  }
+
+  create(record: TaskRecord) {
+    return this.inner.create(record);
+  }
+
+  async get(taskId: string) {
+    const gate = this.#getGate;
+    this.#getGate = undefined;
+    if (gate !== undefined) await gate;
+    return this.inner.get(taskId);
+  }
+
+  async update(taskId: string, patch: TaskPatch, expectedVersion: number) {
+    const failure = this.#updateFailure;
+    this.#updateFailure = undefined;
+    if (failure !== undefined) throw failure;
+    const gate = this.#updateGate;
+    this.#updateGate = undefined;
+    const committed = await this.inner.update(taskId, patch, expectedVersion);
+    if (gate !== undefined) await gate;
+    return committed;
+  }
+
+  sweep(now?: number) {
+    return this.inner.sweep(now);
+  }
+
+  close() {
+    return this.inner.close();
+  }
+}
+
+/** Lets every queued promise continuation run. */
+async function settle() {
+  for (let index = 0; index < 20; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 describe("createTask (I1)", () => {
@@ -873,10 +941,10 @@ describe("the inputRequests round trip", () => {
 // worker claims it with resumeInput(); the task moves to working as before.
 describe("input responses that arrive with no worker", () => {
   /** A task parked by a process that is gone: no waiter here. */
-  async function orphanedRound(
+  async function orphanedRound<S extends TaskStore = MemoryTaskStore>(
     requests: Record<string, InputRequest> = { a: ROOTS, b: ROOTS },
+    store: S = new MemoryTaskStore() as unknown as S,
   ) {
-    const store = new MemoryTaskStore();
     const stamp = new Date().toISOString();
     await store.create({
       taskId: "t",
@@ -1049,6 +1117,332 @@ describe("input responses that arrive with no worker", () => {
     await expect(next).resolves.toEqual({ c: { roots: [] } });
     await engine.close();
   });
+
+  it("keeps a reply that lands while a restarted worker re-asks with a spent key", async () => {
+    const store = new GatedStore();
+    const { engine, handle } = await orphanedRound({ a: ROOTS }, store);
+    // The waiter registers at once, but its write has not read the record yet.
+    const release = store.holdNextGet();
+    const ask = handle.requestInput({ a: ROOTS });
+    const settled = ask.then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+
+    await engine.updateTask("t", { a: rootsResponse() });
+    release();
+
+    expect(await settled).toBeInstanceOf(DuplicateInputKeyError);
+    await expect(handle.resumeInput()).resolves.toEqual({ a: { roots: [] } });
+    await engine.close();
+  });
+
+  it("delivers a reply that lands before this process sees its own round commit", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const release = store.holdNextUpdate();
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+
+    await engine.updateTask(taskId, { a: rootsResponse() });
+    release();
+
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    await engine.close();
+  });
+
+  it("delivers a reply when the round's commit is seen while the reply is being written", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const releaseRound = store.holdNextUpdate();
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+
+    const releaseReply = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    releaseRound();
+    await settle();
+    releaseReply();
+    await update;
+
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    await engine.close();
+  });
+
+  it("keeps a reply whose waiter was cancelled after the reply committed", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    const settled = answers.then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+    await untilParked(engine, taskId);
+
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    expect((await store.inner.get(taskId))?.status).toBe("working");
+    await engine.cancelTask(taskId);
+    release();
+    await update;
+
+    expect(await settled).toBeInstanceOf(TaskCancelled);
+    await expect(handle.resumeInput()).resolves.toEqual({ a: { roots: [] } });
+    await engine.close();
+  });
+
+  /** A parked worker whose reply has committed but not yet returned. */
+  async function replyInFlight() {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    await engine.cancelTask(taskId);
+    return { store, engine, taskId, handle, release, update };
+  }
+
+  it("does not keep a cancelled waiter's reply over a newer round", async () => {
+    const { store, engine, taskId, release, update } = await replyInFlight();
+    const other = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const next = other.handle(taskId).requestInput({ c: ROOTS });
+    void next.catch(() => undefined);
+    await untilParked(other, taskId);
+    release();
+    await expect(update).resolves.toEqual({ resultType: "complete" });
+
+    const record = await store.get(taskId);
+    expect(record).toMatchObject({ status: "input_required" });
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    await other.close();
+    await engine.close();
+  });
+
+  it("does not keep a cancelled waiter's reply once the task has ended", async () => {
+    const { store, engine, taskId, handle, release, update } =
+      await replyInFlight();
+    await handle.cancelled();
+    release();
+    await expect(update).resolves.toEqual({ resultType: "complete" });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    await engine.close();
+  });
+});
+
+describe("claims racing other writes", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+  });
+  afterEach(() => {
+    process.off("unhandledRejection", onUnhandled);
+  });
+
+  async function keptRound() {
+    const store = new MemoryTaskStore();
+    const stamp = new Date().toISOString();
+    await store.create({
+      taskId: "t",
+      status: "input_required",
+      createdAt: stamp,
+      lastUpdatedAt: stamp,
+      ttlMs: null,
+      inputRequests: { a: ROOTS },
+      inputResponses: {},
+      usedInputKeys: ["a"],
+      version: 1,
+    });
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    await engine.updateTask("t", { a: rootsResponse() });
+    return { store, engine };
+  }
+
+  it("gives the answers to exactly one of a late waiter and resumeInput()", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const release = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    const waiter = answers.then(
+      (value) => value,
+      () => undefined,
+    );
+    await untilParked(engine, taskId);
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    const claim = engine.handle(taskId).resumeInput();
+    release();
+    const outcomes = [await waiter, await claim];
+
+    expect(outcomes.filter((outcome) => outcome !== undefined)).toEqual([
+      { a: { roots: [] } },
+    ]);
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects a late waiter whose claim fails, and keeps the answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const release = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    release();
+    await expect(answers).rejects.toBe(failure);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toEqual({
+      a: { roots: [] },
+    });
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  // A store that fails the write keeping a cancelled waiter's answers loses
+  // them. Nothing can retry that write, so the caller is told instead.
+  it("reports a store failure that loses a cancelled waiter's answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    await engine.cancelTask(taskId);
+
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    release();
+    await expect(update).rejects.toBe(failure);
+    await expect(answers).rejects.toBeInstanceOf(TaskCancelled);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(await store.get(taskId)).toMatchObject({ status: "working" });
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects requestInput() with the store failure that loses claimed answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const releaseRound = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    // The reply lands before this process sees the round commit: kept.
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    // The waiter claims them; the task is cancelled before they reach it.
+    const releaseClaim = store.holdNextUpdate();
+    releaseRound();
+    await settle();
+    await engine.cancelTask(taskId);
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    releaseClaim();
+
+    await expect(answers).rejects.toBe(failure);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects updateTask() with the store failure that loses claimed answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const releaseRound = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+
+    // The reply is decided before the round's commit is seen, and returns
+    // after it, so the reply itself claims the kept answers for the waiter.
+    const releaseReply = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    releaseRound();
+    await settle();
+    const releaseClaim = store.holdNextUpdate();
+    releaseReply();
+    await settle();
+    await engine.cancelTask(taskId);
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    releaseClaim();
+
+    await expect(update).rejects.toBe(failure);
+    await expect(answers).rejects.toBeInstanceOf(TaskCancelled);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it.each(["claim first", "new round first"])(
+    "keeps a claim racing a new round consistent (%s)",
+    async (order) => {
+      const { store, engine } = await keptRound();
+      const handle = engine.handle("t");
+      let claim: Promise<unknown>;
+      let next: Promise<unknown>;
+      if (order === "claim first") {
+        claim = handle.resumeInput();
+        next = engine.handle("t").requestInput({ c: ROOTS });
+      } else {
+        next = engine.handle("t").requestInput({ c: ROOTS });
+        claim = handle.resumeInput();
+      }
+      void next.catch(() => undefined);
+      const claimed = await claim;
+      await untilParked(engine, "t");
+
+      // Either the claim won and got the answers, or the new round dropped
+      // them first. Never both, and the old key stays spent either way.
+      expect([undefined, { a: { roots: [] } }]).toContainEqual(claimed);
+      const record = await store.get("t");
+      expect(record).toMatchObject({
+        status: "input_required",
+        inputRequests: { c: ROOTS },
+        usedInputKeys: ["a", "c"],
+      });
+      expect(record).not.toHaveProperty("unclaimedInputResponses");
+      await expect(handle.resumeInput()).resolves.toBeUndefined();
+      expect(unhandled).toEqual([]);
+      await engine.close();
+    },
+  );
 });
 
 describe("argument checking", () => {
@@ -1463,6 +1857,103 @@ describe("the worker signal at TTL expiry", () => {
     await elapse(time, 2_000);
     expect(signal.aborted).toBe(true);
     expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await engine.close();
+  });
+
+  it("follows a TTL another lifecycle revised, re-checking the store at the old expiry", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    const parked = handle.requestInput({ a: ROOTS });
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("extended", { ttlMs: 3_000 });
+    const update = vi.spyOn(store, "update");
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+
+    await elapse(time, 2_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await other.close();
+    await engine.close();
+  });
+
+  it("keeps a live worker when the re-check read fails, and checks again later", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    const parked = handle.requestInput({ a: ROOTS });
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("extended", { ttlMs: 3_000 });
+    vi.spyOn(store, "get").mockRejectedValueOnce(new Error("ECONNRESET"));
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect((await engine.getTask(taskId)).status).toBe("input_required");
+
+    // The retry reads the extended TTL and waits for it.
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    await elapse(time, 1_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await other.close();
+    await engine.close();
+  });
+
+  it("aborts the signal of an expired task even if one re-check read never answers", async () => {
+    const { engine, store, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    await vi.advanceTimersByTimeAsync(0);
+    vi.spyOn(store, "get").mockReturnValueOnce(new Promise(() => undefined));
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    await elapse(time, 10_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("never aborts a signal whose TTL another lifecycle removed", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 50 });
+    const signal = engine.handle(taskId).signal;
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("forever", { ttlMs: null });
+
+    await elapse(time, 10 * 3_600_000);
+    expect(signal.aborted).toBe(false);
+    expect((await engine.getTask(taskId)).status).toBe("working");
+    await other.close();
     await engine.close();
   });
 

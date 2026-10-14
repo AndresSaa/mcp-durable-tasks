@@ -130,14 +130,14 @@ async function work(task: TaskHandle) {
 | `signal`                          | `AbortSignal`                                                 | Raised by `tasks/cancel` or TTL expiry. Cooperative: nothing is killed                    |
 | `progress(statusMessage, patch?)` | `patch?: { pollIntervalMs?: number; ttlMs?: number \| null }` | Sets `statusMessage`; optionally revises the hints. Invalid input: whole call not applied |
 | `requestInput(requests)`          | `→ Promise<InputResponses>`                                   | Parks in `input_required`; resolves when every key is answered                            |
-| `resumeInput()`                   | `→ Promise<InputResponses \| undefined>`                      | Claims answers that arrived while no worker waited, exactly once                          |
+| `resumeInput()`                   | `→ Promise<InputResponses \| undefined>`                      | Claims answers that arrived while no worker waited, at most once                          |
 | `complete(result)`                | `result: JsonObject`                                          | Terminal                                                                                  |
 | `fail(error)`                     | `error: TaskError`                                            | Terminal. A JSON-RPC error: integer `code`, string `message`                              |
 | `cancelled(statusMessage?)`       | `statusMessage?: string`                                      | Terminal. Acknowledges a cancellation the worker chose to honour                          |
 
 Every write method returns `Promise<void>` unless shown otherwise.
 
-**`signal.reason`** is a `TaskCancelled` after `tasks/cancel`, or a `TaskNotFoundError` once the TTL elapses by the lifecycle's clock (`ttlMs: null` never aborts). A signal raised by a cancellation keeps its first reason. Tell them apart with `signal.reason.name`. A worker that only reads `signal` and never writes is told too. Expiry abort is an engine policy that writes nothing ([contract](contract.md#process-boundaries)).
+**`signal.reason`** is a `TaskCancelled` after `tasks/cancel`, or a `TaskNotFoundError` once the TTL elapses by the lifecycle's clock and a read of the store confirms it (`ttlMs: null` never aborts). If that read fails, the signal stays as it is and the read is retried. A signal raised by a cancellation keeps its first reason. Tell them apart with `signal.reason.name`. A worker that only reads `signal` and never writes is told too. Expiry abort is an engine policy that writes nothing ([contract](contract.md#process-boundaries)).
 
 **`fail(error)`** takes `TaskError`, `{ code: number; message: string; data?: JsonValue }`, as the stable schema requires. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and writes nothing. Extra JSON members are kept (the schema is open). `TaskRecord.error` and `FailedTask.error` stay `JsonObject`, so an older log with some other `error` still opens and serves it unchanged ([contract](contract.md#wire-contract)).
 
@@ -180,7 +180,7 @@ async function resume(task: TaskHandle) {
 }
 ```
 
-- Resolves with the kept responses **exactly once**: the claim is a compare-and-swap write that removes them, even across instances on a shared store.
+- Resolves with the kept responses **at most once**: the claim is a compare-and-swap write that removes them, even across instances on a shared store. If the process dies after the claim and before the worker acts on them, they are gone and the keys stay spent, so save the worker's progress before relying on a claim.
 - Resolves with `undefined`, writing nothing, when there is nothing to claim.
 - Throws like any write: `TaskNotFoundError` for a missing or expired task, `TaskAlreadyTerminalError` for a finished one.
 - **Call it before `requestInput()`.** A new round, or the end of the task, drops unclaimed answers. The old keys stay spent (I5).

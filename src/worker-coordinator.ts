@@ -1,12 +1,24 @@
 import { TaskNotFoundError } from "./errors.js";
+import { hasExpired } from "./record.js";
 import type { InputResponses, TaskRecord } from "./types.js";
 import { MAX_TIMER_MS } from "./validation.js";
 import { isTerminal } from "./wire.js";
+
+/** How long an expiry re-check read may take before it counts as unknown. */
+export const CONFIRM_TIMEOUT_MS = 5_000;
+/** The first delay before an unknown re-check is read again; it doubles. */
+export const RETRY_FIRST_MS = 1_000;
+/** The longest delay between re-check reads. */
+export const RETRY_MAX_MS = 30_000;
 
 interface Waiter {
   token: symbol;
   /** The keys of the round this waiter asked for. */
   keys: ReadonlySet<string>;
+  /** Its own round has committed, so a reply may be delivered to it. */
+  armed: boolean;
+  /** A reply completed its round before it was armed; the answers were kept. */
+  missed: boolean;
   promise: Promise<InputResponses>;
   resolve: (responses: InputResponses) => void;
   reject: (error: unknown) => void;
@@ -49,7 +61,10 @@ export type RecordLookup = (taskId: string) => Promise<TaskRecord | undefined>;
  * At expiry the signal is aborted, not just dropped, so a worker that holds it
  * learns that its task is gone. The reason is the `TaskNotFoundError` the task
  * now reads as everywhere else. A signal already raised by a cancellation keeps
- * its first reason. This is cooperative and writes nothing.
+ * its first reason. This is cooperative and writes nothing. Another instance
+ * may have revised the TTL without this one seeing it, so the expiry is first
+ * confirmed with one pure read. While the store cannot answer that read, the
+ * task is kept and read again later, until the task ends or `close()`.
  */
 export class WorkerCoordinator {
   readonly #now: () => number;
@@ -78,14 +93,45 @@ export class WorkerCoordinator {
     return this.#controller(taskId).signal;
   }
 
-  /** Whether a waiter here asked for exactly the round with these keys. */
+  /**
+   * Whether an armed waiter here asked for exactly the round with these keys.
+   * A waiter whose own round has not committed yet is not a delivery target:
+   * its write may still fail (a spent key, a lost race), and answers handed
+   * to it would then be lost.
+   */
   awaits(taskId: string, keys: readonly string[]): boolean {
     const waiter = this.#waiters.get(taskId);
-    return (
-      waiter !== undefined &&
-      waiter.keys.size === keys.length &&
-      keys.every((key) => waiter.keys.has(key))
-    );
+    return waiter !== undefined && waiter.armed && sameKeys(waiter.keys, keys);
+  }
+
+  /**
+   * Marks a registration's round as committed. Returns true if a reply
+   * completed that round first, so its answers are waiting to be claimed.
+   */
+  arm(registration: WaitRegistration): boolean {
+    const waiter = this.#waiters.get(registration.taskId);
+    if (waiter?.token !== registration.token) return false;
+    waiter.armed = true;
+    return waiter.missed;
+  }
+
+  /**
+   * Called after a reply's answers were kept because no armed waiter asked
+   * for its round. If a waiter for that round exists and is armed by now, it
+   * is returned so the caller can claim the answers for it; if it is not
+   * armed yet, it is marked so that `arm()` reports it.
+   */
+  missed(
+    taskId: string,
+    keys: readonly string[],
+  ): WaitRegistration | undefined {
+    const waiter = this.#waiters.get(taskId);
+    if (waiter === undefined || !sameKeys(waiter.keys, keys)) return undefined;
+    if (!waiter.armed) {
+      waiter.missed = true;
+      return undefined;
+    }
+    return { taskId, token: waiter.token, promise: waiter.promise };
   }
 
   register(taskId: string, keys: readonly string[]): WaitRegistration {
@@ -114,6 +160,8 @@ export class WorkerCoordinator {
     const waiter: Waiter = {
       token,
       keys: new Set(keys),
+      armed: false,
+      missed: false,
       promise,
       resolve,
       reject,
@@ -131,13 +179,14 @@ export class WorkerCoordinator {
   }
 
   /**
-   * Hands a completed round to the waiter that asked for it. A waiter for a
-   * different round (one registered while its own round was still being
-   * written) is left alone: those answers are not the ones it asked for.
+   * Hands a completed round to the armed waiter that asked for it, and
+   * returns whether it did. A waiter for a different round is left alone:
+   * those answers are not the ones it asked for.
    */
-  resolve(taskId: string, responses: InputResponses): void {
-    if (!this.awaits(taskId, Object.keys(responses))) return;
+  resolve(taskId: string, responses: InputResponses): boolean {
+    if (!this.awaits(taskId, Object.keys(responses))) return false;
     this.#take(taskId)?.resolve(structuredClone(responses));
+    return true;
   }
 
   finish(taskId: string, error: unknown): void {
@@ -219,13 +268,68 @@ export class WorkerCoordinator {
       if (this.#expiries.get(taskId) !== expiry) return;
       const remaining = expiresAt - this.#now();
       if (remaining <= 0) {
-        this.#expired(taskId, new TaskNotFoundError(taskId));
+        this.#confirmExpiry(taskId, expiry);
         return;
       }
       expiry.timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
       expiry.timer.unref?.();
     };
     schedule();
+  }
+
+  /**
+   * The tracked expiry has passed. One pure read (I3) decides: the task is
+   * released only if the store no longer has it or its stored TTL has
+   * elapsed by this clock; otherwise it is tracked again from that record.
+   * Without a lookup, it is released.
+   *
+   * A read that fails, throws or does not answer within `CONFIRM_TIMEOUT_MS`
+   * decides nothing: the task may be alive and revised elsewhere. It is read
+   * again after a delay that doubles from `RETRY_FIRST_MS` up to
+   * `RETRY_MAX_MS`. A late answer still counts.
+   */
+  #confirmExpiry(taskId: string, expiry: Expiry, attempt = 0): void {
+    const current = () =>
+      !this.#closed && this.#expiries.get(taskId) === expiry;
+    if (!current()) return;
+    if (this.#lookup === undefined) {
+      this.#expired(taskId, new TaskNotFoundError(taskId));
+      return;
+    }
+    let unknown = false;
+    const retry = () => {
+      if (unknown || !current()) return;
+      unknown = true;
+      const delay = Math.min(RETRY_FIRST_MS * 2 ** attempt, RETRY_MAX_MS);
+      this.#later(expiry, delay, () => {
+        this.#confirmExpiry(taskId, expiry, attempt + 1);
+      });
+    };
+    let pending: Promise<TaskRecord | undefined>;
+    try {
+      pending = Promise.resolve(this.#lookup(taskId));
+    } catch {
+      retry();
+      return;
+    }
+    this.#later(expiry, CONFIRM_TIMEOUT_MS, retry);
+    pending.then((record) => {
+      if (!current()) return;
+      if (record === undefined || hasExpired(record, this.#now())) {
+        this.#expired(taskId, new TaskNotFoundError(taskId));
+        return;
+      }
+      // The record may carry the version already tracked; let it re-arm.
+      this.#clearExpiry(taskId);
+      this.observe(record);
+    }, retry);
+  }
+
+  /** Replaces the expiry's one timer. Never keeps the process alive. */
+  #later(expiry: Expiry, ms: number, run: () => void): void {
+    if (expiry.timer !== undefined) clearTimeout(expiry.timer);
+    expiry.timer = setTimeout(run, ms);
+    expiry.timer.unref?.();
   }
 
   /**
@@ -301,4 +405,8 @@ export class WorkerCoordinator {
       },
     );
   }
+}
+
+function sameKeys(set: ReadonlySet<string>, keys: readonly string[]): boolean {
+  return set.size === keys.length && keys.every((key) => set.has(key));
 }

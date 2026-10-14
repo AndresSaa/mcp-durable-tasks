@@ -332,9 +332,10 @@ export interface TaskRecord {
   /**
    * The answers to a completed round that no worker in the process was
    * waiting for, as after a restart. Internal. Present only on a `working`
-   * task, from the update that completed the round until a worker claims
-   * them with {@linkcode TaskHandle.resumeInput}, opens a new round, or the
-   * task ends. A store must persist it like every other field.
+   * task: set by the update that completed the round, or by a later update
+   * when the waiter was rejected before it got them, and kept until a worker
+   * claims them with {@linkcode TaskHandle.resumeInput}, opens a new round,
+   * or the task ends. A store must persist it like every other field.
    */
   readonly unclaimedInputResponses?: InputResponses;
   /**
@@ -496,10 +497,12 @@ export interface TaskHandle {
   /**
    * Claims the answers to a round that was completed while no worker in this
    * process was waiting for it, typically because the process that asked
-   * was restarted. Resolves with those responses exactly once, then with
+   * was restarted. Resolves with those responses at most once, then with
    * `undefined`; with `undefined` straight away when there is nothing to
    * claim, without writing. The claim is a compare-and-swap write, so two
-   * concurrent callers cannot both receive the same answers.
+   * concurrent callers cannot both receive the same answers. If the process
+   * dies after the claim, the answers are gone; save what the worker needs
+   * from them before relying on them.
    *
    * A restarted worker calls this before it asks again: opening a new round
    * with `requestInput()` discards unclaimed answers, and the old keys stay
