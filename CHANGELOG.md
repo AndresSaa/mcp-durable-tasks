@@ -10,6 +10,10 @@ either is a major version.
 
 ## [Unreleased]
 
+### Added
+
+- A worker's `handle.signal` is now aborted when its task's TTL elapses, with a `TaskNotFoundError` as the reason. Until now the lifecycle dropped the signal at expiry without aborting it, so a worker that held it was never told its task was gone; only its next write found out. This is an engine policy, since the extension leaves stopping the work to the server: cooperative, process-local, measured by the lifecycle's clock including a TTL revised with `progress()`, and never for `ttlMs: null`. Nothing is written and the wire does not change; an expired task still reads as not found. A signal already raised by `tasks/cancel` keeps its `TaskCancelled` reason, and a worker parked in `requestInput()` is still rejected exactly once, with the same `TaskNotFoundError`. The first read of `handle.signal` now performs one `store.get()` so that a worker that reads its signal and never writes is told too, and a worker write that finds the task already expired in the store aborts the signal the same way. Observable: a worker that checks `signal.aborted` to decide whether it was cancelled should check `signal.reason.name` as well.
+
 ### Fixed
 
 - **Breaking:** `fail()` now requires a JSON-RPC error object, as the stable

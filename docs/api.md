@@ -180,15 +180,15 @@ async function work(task: TaskHandle) {
 }
 ```
 
-| Member                            | Contract                                                                 |
-| --------------------------------- | ------------------------------------------------------------------------ |
-| `taskId`                          | The id this handle writes to                                             |
-| `signal`                          | `AbortSignal`, raised by `tasks/cancel`. Cooperative — nothing is killed |
-| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`²     |
-| `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered           |
-| `complete(result)`                | Terminal. `result` must be a JSON object                                 |
-| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹       |
-| `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour         |
+| Member                            | Contract                                                             |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `taskId`                          | The id this handle writes to                                         |
+| `signal`                          | `AbortSignal`, raised by `tasks/cancel` or TTL expiry³. Cooperative  |
+| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`² |
+| `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered       |
+| `complete(result)`                | Terminal. `result` must be a JSON object                             |
+| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹   |
+| `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour     |
 
 ¹ The stable schema requires that shape for a failed task's `error`. The parameter is typed as the exported `TaskError`, `{ code: number; message: string; data?: JsonValue }`. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and nothing is written, which also covers untyped JavaScript. Other JSON members that reach it anyway are kept, because the schema is open. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`: a log written before this check may hold a failed task with some other `error`, and it still opens and serves that error unchanged ([contract](contract.md#wire-contract)).
 
@@ -198,6 +198,8 @@ throws `TypeError` and the whole call, message included, is not applied.
 `statusMessage` must be a string here, in `cancelled()` and in `createTask()`;
 TypeScript enforces that, and the engine checks it again at runtime for
 JavaScript callers, throwing `TypeError` without writing.
+
+³ Nothing is killed in either case. `signal.reason` is a `TaskCancelled` after `tasks/cancel`, and a `TaskNotFoundError` when the task's TTL elapses: the task is gone, and every later write and `tasks/get` say so with the same error. A signal already raised by a cancellation keeps its first reason. Expiry is measured by the lifecycle's clock from `createdAt` plus the current `ttlMs`, including a TTL revised with `progress()`; `ttlMs: null` never aborts. The first read of `signal` looks the record up once, so a worker that reads it and never writes is told too. This is an engine policy, not something the extension requires; nothing is written and the wire does not change ([contract](contract.md#process-boundaries)).
 
 Result, error, request and response trees are detached and validated before a
 write. `-0` is accepted because it is a valid JSON number, then canonicalised
@@ -397,6 +399,8 @@ and, if it left the underlying log unusable, surfaced on the next operation.
 | `DuplicateInputKeyError`   | An input key was reused within one task's lifetime           | Fix the caller — this is a bug       |
 | `TaskEntryTooLargeError`   | A record exceeded `maxEntryBytes`. Nothing was committed     | Complete again with a smaller result |
 | `TaskCancelled`            | The reason on an aborted `signal`, not thrown by the library | Stop the work                        |
+
+`TaskNotFoundError` is also the reason on a `signal` aborted because the task's TTL elapsed. Tell the two apart with `signal.reason.name`.
 
 `TaskEntryTooLargeError` carries a stable `code` of `ERR_ENTRY_TOO_LARGE`, so a
 worker can recover rather than lose the work it just finished:

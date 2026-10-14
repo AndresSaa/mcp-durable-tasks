@@ -77,7 +77,10 @@ export class TaskLifecycle {
       );
     }
     this.#now = options.now ?? Date.now;
-    this.#workers = new WorkerCoordinator(this.#now);
+    // The lookup lets a signal read before any write learn its task's TTL.
+    this.#workers = new WorkerCoordinator(this.#now, (taskId) =>
+      this.#store.get(taskId),
+    );
     this.#mutator = new TaskMutator({
       store: this.#store,
       now: this.#now,
@@ -326,10 +329,10 @@ export class TaskLifecycle {
     try {
       return await operation();
     } catch (error) {
-      if (
-        error instanceof TaskNotFoundError ||
-        error instanceof TaskAlreadyTerminalError
-      ) {
+      if (error instanceof TaskNotFoundError) {
+        // The store already treats the task as expired; tell a held signal.
+        this.#workers.gone(taskId, error);
+      } else if (error instanceof TaskAlreadyTerminalError) {
         this.#workers.finish(taskId, error);
       }
       throw error;

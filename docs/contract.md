@@ -302,10 +302,18 @@ That process-local state is bounded by the task's life. A lifecycle releases
 what it holds for a task (the raised signal of a cancellation whose worker is
 not, or not yet, running here, and any parked waiter) when the task reaches a
 terminal state through it, when the task's TTL elapses by its clock, or on
-`close()`. Expiry is tracked from the record it last read or committed, so a
+`close()`. Expiry is tracked from the newest record it has read or committed, so a
 TTL revised by another instance is not seen; the worst case is that a signal
 raised here is dropped at the old expiry, before a worker that never read it
 starts.
+
+When a task's TTL elapses, the lifecycle also aborts the worker's signal, with the `TaskNotFoundError` the task now reads as everywhere else. The extension leaves this open on purpose: TTL bounds how long a task is retained and exposed, and whether the underlying work stops is server-defined (confirmed by a maintainer in [ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11)). Stopping is therefore an engine policy, and a narrow one:
+
+- It is cooperative. Nothing is killed; a worker that ignores the signal keeps running, and its next write throws `TaskNotFoundError`.
+- It is process-local. Only a worker in the process that tracks the expiry is told, by that lifecycle's clock, following any TTL revised through it. A worker whose write finds the task already gone in the store (the store's clock got there first) gets its signal aborted the same way.
+- Nothing is written and nothing is durable. There is no wire change and no new status; an expired task still reads as not found, and replay still discards it.
+- A signal already raised by `tasks/cancel` keeps its `TaskCancelled` reason. A parked `requestInput()` is rejected exactly once, with the same error, before the signal is aborted.
+- A signal that is read before the worker writes anything is armed by one pure read of the record, so a worker that only reads its signal is told too. Reading the signal of a task that is already gone yields a signal that is aborted as soon as that read answers. A task with `ttlMs: null` is never aborted this way.
 
 That affinity is the deployment model the extension itself defines. Its
 Streamable HTTP binding requires the client to set the `Mcp-Name` header to

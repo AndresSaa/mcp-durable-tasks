@@ -1,6 +1,7 @@
 import { TaskNotFoundError } from "./errors.js";
 import type { InputResponses, TaskRecord } from "./types.js";
 import { MAX_TIMER_MS } from "./validation.js";
+import { isTerminal } from "./wire.js";
 
 interface Waiter {
   token: symbol;
@@ -12,7 +13,10 @@ interface Waiter {
 }
 
 interface Expiry {
-  expiresAt: number;
+  /** The version of the record this expiry was computed from. */
+  version: number;
+  /** `undefined` when the record never expires here (no TTL, bad date). */
+  expiresAt?: number;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -21,6 +25,9 @@ export interface WaitRegistration {
   readonly token: symbol;
   readonly promise: Promise<InputResponses>;
 }
+
+/** A pure read of the current record, used to arm an expiry. */
+export type RecordLookup = (taskId: string) => Promise<TaskRecord | undefined>;
 
 /**
  * Process-local coordination for the worker that owns a task.
@@ -36,15 +43,23 @@ export interface WaitRegistration {
  * `sweep()` is a store operation the lifecycle does not observe. Without it,
  * every such cancellation would keep its AbortController for the life of the
  * process.
+ *
+ * At expiry the signal is aborted, not just dropped, so a worker that holds it
+ * learns that its task is gone. The reason is the `TaskNotFoundError` the task
+ * now reads as everywhere else. A signal already raised by a cancellation keeps
+ * its first reason. This is cooperative and writes nothing.
  */
 export class WorkerCoordinator {
   readonly #now: () => number;
+  readonly #lookup: RecordLookup | undefined;
   readonly #signals = new Map<string, AbortController>();
   readonly #waiters = new Map<string, Waiter>();
   readonly #expiries = new Map<string, Expiry>();
+  #closed = false;
 
-  constructor(now: () => number) {
+  constructor(now: () => number, lookup?: RecordLookup) {
     this.#now = now;
+    this.#lookup = lookup;
   }
 
   /** How many tasks hold process-local state. Internal, for leak tests. */
@@ -115,20 +130,26 @@ export class WorkerCoordinator {
   }
 
   /**
+   * The store no longer has the task: its TTL elapsed by the store's clock
+   * before this lifecycle's timer fired, or another instance's TTL revision
+   * was never seen here. Treated exactly like a local expiry.
+   */
+  gone(taskId: string, error: TaskNotFoundError): void {
+    this.#expired(taskId, error);
+  }
+
+  /**
    * Records cancellation intent for `record`'s task. The signal stays raised
    * for a worker that reads it later, until the task ends or expires.
    */
   abort(taskId: string, reason: unknown, record: TaskRecord): void {
-    this.#controller(taskId).abort(reason);
+    // The caller already holds the record, so no lookup is needed to arm it.
+    this.#controller(taskId, false).abort(reason);
     this.#trackExpiry(record);
   }
 
   observe(record: TaskRecord): void {
-    if (
-      record.status === "completed" ||
-      record.status === "failed" ||
-      record.status === "cancelled"
-    ) {
+    if (isTerminal(record.status)) {
       this.finish(
         record.taskId,
         new Error(
@@ -146,6 +167,7 @@ export class WorkerCoordinator {
   }
 
   close(error: unknown): void {
+    this.#closed = true;
     const taskIds = [...this.#waiters.keys()];
     for (const taskId of taskIds) this.finish(taskId, error);
     this.#signals.clear();
@@ -156,21 +178,30 @@ export class WorkerCoordinator {
    * One timer per tracked task, at `createdAt + ttlMs` by the injected clock.
    * If it fires before that clock agrees (a test clock, or one that stepped
    * back), it re-arms instead of releasing a live task.
+   *
+   * A record older than the one already tracked is ignored: a cancel or a
+   * lookup may have read the record before a commit this coordinator already
+   * observed, and its TTL would be stale.
    */
   #trackExpiry(record: TaskRecord): void {
     const { taskId } = record;
+    const current = this.#expiries.get(taskId);
+    if (current !== undefined && current.version > record.version) return;
     this.#clearExpiry(taskId);
+
+    const expiry: Expiry = { version: record.version };
+    this.#expiries.set(taskId, expiry);
     if (record.ttlMs === null) return;
     const createdAt = Date.parse(record.createdAt);
     if (Number.isNaN(createdAt)) return;
 
-    const expiry: Expiry = { expiresAt: createdAt + record.ttlMs };
-    this.#expiries.set(taskId, expiry);
+    expiry.expiresAt = createdAt + record.ttlMs;
+    const expiresAt = expiry.expiresAt;
     const schedule = () => {
       if (this.#expiries.get(taskId) !== expiry) return;
-      const remaining = expiry.expiresAt - this.#now();
+      const remaining = expiresAt - this.#now();
       if (remaining <= 0) {
-        this.#expired(taskId);
+        this.#expired(taskId, new TaskNotFoundError(taskId));
         return;
       }
       expiry.timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
@@ -179,11 +210,15 @@ export class WorkerCoordinator {
     schedule();
   }
 
-  #expired(taskId: string): void {
+  /**
+   * Rejects a parked waiter first, so it settles exactly once with the
+   * expiry error rather than through its abort listener, then aborts the
+   * signal for a worker that holds it and releases everything.
+   */
+  #expired(taskId: string, error: TaskNotFoundError): void {
     const waiter = this.#waiters.get(taskId);
-    if (waiter !== undefined) {
-      this.#reject(taskId, waiter.token, new TaskNotFoundError(taskId));
-    }
+    if (waiter !== undefined) this.#reject(taskId, waiter.token, error);
+    this.#signals.get(taskId)?.abort(error);
     this.#signals.delete(taskId);
     this.#clearExpiry(taskId);
   }
@@ -209,12 +244,43 @@ export class WorkerCoordinator {
     return waiter;
   }
 
-  #controller(taskId: string): AbortController {
+  #controller(taskId: string, arm = true): AbortController {
     let controller = this.#signals.get(taskId);
     if (controller === undefined) {
       controller = new AbortController();
       this.#signals.set(taskId, controller);
+      if (arm && !this.#expiries.has(taskId)) this.#arm(taskId, controller);
     }
     return controller;
+  }
+
+  /**
+   * A worker may read its signal and never write again, so nothing else would
+   * tell this process the task's TTL. The first read looks the record up once
+   * to arm the expiry. The lookup is a pure read (I3 is unaffected) and only
+   * acts if this controller is still the task's signal when it answers.
+   */
+  #arm(taskId: string, controller: AbortController): void {
+    if (this.#lookup === undefined || this.#closed) return;
+    let pending: Promise<TaskRecord | undefined>;
+    try {
+      pending = Promise.resolve(this.#lookup(taskId));
+    } catch {
+      return; // As for a failed read below.
+    }
+    pending.then(
+      (record) => {
+        if (this.#closed || this.#signals.get(taskId) !== controller) return;
+        if (record === undefined) {
+          this.#expired(taskId, new TaskNotFoundError(taskId));
+        } else {
+          this.observe(record);
+        }
+      },
+      () => {
+        // A failed read arms nothing; the signal is still released by the
+        // next committed write, a terminal transition or close().
+      },
+    );
   }
 }

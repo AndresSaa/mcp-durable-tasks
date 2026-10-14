@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TaskCancelled, type TaskRecord } from "../src/index.js";
+import {
+  TaskCancelled,
+  TaskNotFoundError,
+  type TaskRecord,
+} from "../src/index.js";
 import { WorkerCoordinator } from "../src/worker-coordinator.js";
 
 // Process-local bookkeeping must be bounded by the life of the tasks it
@@ -133,6 +137,252 @@ describe("a parked worker", () => {
     await expect(registration.promise).rejects.toMatchObject({
       name: "TaskNotFoundError",
     });
+    expect(workers.trackedTasks).toBe(0);
+  });
+});
+
+// A worker that already holds `handle.signal` learns that its task expired:
+// the signal is aborted with the same TaskNotFoundError a later write or
+// tasks/get would produce. Cooperative and process-local, like cancellation.
+describe("a held signal at expiry", () => {
+  function held(
+    workers: WorkerCoordinator,
+    taskId: string,
+    ttlMs: number | null,
+  ) {
+    const signal = workers.signalFor(taskId);
+    workers.observe({ ...record(taskId, ttlMs), version: 1 });
+    return signal;
+  }
+
+  it("is aborted with TaskNotFoundError and released, with no timer left", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = held(workers, "t", 1_000);
+    const onAbort = vi.fn();
+    signal.addEventListener("abort", onAbort);
+
+    current += 999;
+    vi.advanceTimersByTime(999);
+    expect(signal.aborted).toBe(false);
+
+    current += 1;
+    vi.advanceTimersByTime(1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(signal.reason).toMatchObject({ taskId: "t" });
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("is never aborted for a task with ttlMs null", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = held(workers, "t", null);
+
+    const year = 365 * 24 * 3_600_000;
+    current += year;
+    vi.advanceTimersByTime(year);
+    expect(signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(workers.trackedTasks).toBe(1);
+
+    workers.close(new Error("closed"));
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("follows a TTL extended by a later commit and is not aborted at the old expiry", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = held(workers, "t", 1_000);
+    workers.observe({ ...record("t", 5_000), version: 2 });
+
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    expect(signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    current += 4_000;
+    vi.advanceTimersByTime(4_000);
+    expect(signal.aborted).toBe(true);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("is not aborted while the injected clock disagrees, even if the timer fires", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = held(workers, "t", 1_000);
+
+    vi.advanceTimersByTime(1_000);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("ignores a record older than the one already tracked", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = held(workers, "t", 1_000);
+    workers.observe({ ...record("t", null), version: 3 });
+    // A stale record, like the one a cancel read before the last commit.
+    workers.abort("t", new TaskCancelled("t"), {
+      ...record("t", 1_000),
+      version: 2,
+    });
+
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("keeps the cancellation reason of a signal already raised", () => {
+    const workers = new WorkerCoordinator(now);
+    const signal = workers.signalFor("t");
+    workers.abort("t", new TaskCancelled("t"), record("t", 1_000));
+
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("rejects a parked waiter exactly once, with TaskNotFoundError, and aborts the signal", async () => {
+    const workers = new WorkerCoordinator(now);
+    const registration = workers.register("t");
+    const signal = workers.signalFor("t");
+    workers.observe({
+      ...record("t", 1_000),
+      status: "input_required",
+      inputRequests: {},
+      version: 1,
+    });
+    const settled = vi.fn();
+    registration.promise.then(settled, settled);
+
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    await expect(registration.promise).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBe(settled.mock.calls[0]![0]);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("stays bounded across 20,000 held signals", () => {
+    const workers = new WorkerCoordinator(now);
+    const signals = Array.from({ length: 20_000 }, (_, index) =>
+      held(workers, `t${index}`, 1_000),
+    );
+    current += 1_000;
+    vi.advanceTimersByTime(1_000);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// A worker may read its signal and never write again, so nothing else would
+// tell this process the task's TTL. Reading the signal for the first time
+// looks the record up once, with a pure read, to arm the expiry.
+describe("a signal read before any commit", () => {
+  function lookupOf(records: Map<string, TaskRecord>) {
+    return vi.fn(async (taskId: string) => records.get(taskId));
+  }
+
+  it("arms its expiry from one lookup and is aborted when the TTL elapses", async () => {
+    const lookup = lookupOf(new Map([["t", record("t", 1_000)]]));
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("is aborted at once when the task is already gone", async () => {
+    const workers = new WorkerCoordinator(now, lookupOf(new Map()));
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("is released without aborting when the task is already terminal", async () => {
+    const lookup = lookupOf(
+      new Map([
+        ["t", { ...record("t", 1_000), status: "completed", result: {} }],
+      ]),
+    );
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("does not override a newer commit observed while the lookup was in flight", async () => {
+    let answer!: (value: TaskRecord) => void;
+    const workers = new WorkerCoordinator(
+      now,
+      () =>
+        new Promise<TaskRecord>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const signal = workers.signalFor("t");
+    workers.observe({ ...record("t", null), version: 1 });
+    answer(record("t", 1_000));
+    await vi.advanceTimersByTimeAsync(0);
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("swallows a failed lookup and keeps the signal until close()", async () => {
+    const workers = new WorkerCoordinator(now, () =>
+      Promise.reject(new Error("store unavailable")),
+    );
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+    workers.close(new Error("closed"));
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("treats a lookup that throws synchronously like a failed one", async () => {
+    const workers = new WorkerCoordinator(now, () => {
+      throw new Error("store closed");
+    });
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("does nothing once closed", async () => {
+    let answer!: (value: TaskRecord | undefined) => void;
+    const workers = new WorkerCoordinator(
+      now,
+      () =>
+        new Promise<TaskRecord | undefined>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const signal = workers.signalFor("t");
+    workers.close(new Error("closed"));
+    answer(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
     expect(workers.trackedTasks).toBe(0);
   });
 });

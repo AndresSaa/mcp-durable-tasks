@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as publicApi from "../src/index.js";
 import {
   ConcurrentUpdateError,
@@ -1079,7 +1079,8 @@ describe("cancellation", () => {
       await store.sweep(time.now());
 
       // The aborted controller that cancelTask created is gone: a handle for
-      // the same id now reads a fresh, unraised signal.
+      // the same id now reads a fresh signal, not the TaskCancelled one (its
+      // lookup later aborts it as not found, since the task is gone).
       for (const taskId of ids) {
         expect(engine.handle(taskId).signal.aborted).toBe(false);
       }
@@ -1207,6 +1208,146 @@ describe("TTL", () => {
     const removed = await store.sweep(time.now());
     expect(removed).toBe(2);
     expect(typeof removed).toBe("number");
+  });
+});
+
+// TTL bounds how long the task is exposed; stopping the work is the server's
+// policy. This engine's policy is cooperative: a worker holding the signal is
+// told, with the TaskNotFoundError the task now reads as. Nothing is written.
+describe("the worker signal at TTL expiry", () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+
+  beforeEach(() => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    process.off("unhandledRejection", onUnhandled);
+  });
+
+  async function elapse(time: ReturnType<typeof clock>, ms: number) {
+    time.advance(ms);
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  it("aborts a held signal with TaskNotFoundError, and the task reads as not found", async () => {
+    const { engine, store, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    const update = vi.spyOn(store, "update");
+
+    await elapse(time, 999);
+    expect(signal.aborted).toBe(false);
+
+    await elapse(time, 1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(engine.getTask(taskId)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("never aborts the signal of a task with ttlMs null", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: null });
+    const signal = engine.handle(taskId).signal;
+
+    await elapse(time, 10 * 3_600_000);
+    expect(signal.aborted).toBe(false);
+    await engine.close();
+  });
+
+  it("re-arms when progress() extends the TTL, and does not abort at the old expiry", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+
+    await elapse(time, 500);
+    await handle.progress("extending", { ttlMs: 3_000 });
+
+    await elapse(time, 500);
+    expect(signal.aborted).toBe(false);
+    await expect(engine.getTask(taskId)).resolves.toBeDefined();
+
+    await elapse(time, 2_000);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await engine.close();
+  });
+
+  it("rejects a worker parked in requestInput exactly once, and aborts its signal", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const parked = handle.requestInput({ a: ROOTS });
+    const signal = handle.signal;
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await engine.getTask(taskId)).status).toBe("input_required");
+
+    await elapse(time, 1_000);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBe(settled.mock.calls[0]![0]);
+
+    // Expiry released the controller. Reading the signal again yields a new
+    // one, which is aborted as soon as its lookup finds the task gone.
+    const reread = handle.signal;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reread.reason).toBeInstanceOf(TaskNotFoundError);
+
+    // A late answer finds no task and wakes nothing a second time.
+    await expect(
+      engine.updateTask(taskId, { a: rootsResponse() }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("keeps TaskCancelled as the reason when the task was cancelled first", async () => {
+    const { engine, time } = build();
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const signal = engine.handle(taskId).signal;
+    await engine.cancelTask(taskId);
+
+    await elapse(time, 1_000);
+    expect(signal.reason).toBeInstanceOf(TaskCancelled);
+    await engine.close();
+  });
+
+  it("aborts the signal when a worker's write finds the task already gone", async () => {
+    // The store's clock is ahead of the lifecycle's, so the write sees the
+    // expiry before the lifecycle's own timer does.
+    const time = clock();
+    const storeTime = clock();
+    const store = new MemoryTaskStore({ now: storeTime.now });
+    const engine = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    await vi.advanceTimersByTimeAsync(0);
+
+    storeTime.advance(1_000);
+    await expect(handle.progress("late")).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await engine.close();
   });
 });
 
