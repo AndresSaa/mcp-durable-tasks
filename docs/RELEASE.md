@@ -1,61 +1,8 @@
 # Operativa de lanzamiento
 
-Documento interno para abrir el repositorio, taguear `v0.1.0` y preparar la
-primera publicación en npm. El
-[contrato de versiones](./contract.md#version-contract) decide qué entra en
-cada versión; este fichero sólo convierte esa decisión en una secuencia
-reproducible.
+Documento interno: secuencia reproducible para abrir el repositorio, publicar `v0.1.0` a mano y sacar las versiones siguientes con el workflow. Qué entra en cada versión lo decide el [contrato de versiones](./contract.md#version-contract). El estado de cada versión está en [`EXECUTION-PLAN.md`](./EXECUTION-PLAN.md).
 
-## Qué contiene `v0.1.0`
-
-- El motor server-side de la extensión MCP Tasks: lifecycle, handles, TTL,
-  hints de polling, cancelación cooperativa y rondas parciales de input.
-- `MemoryTaskStore` y `WalTaskStore`, con CAS, replay, compactación y límites
-  de entrada observables.
-- El kit público `mcp-durable-tasks/testing` para stores de terceros.
-- Tests unitarios, de conformidad, property-based y crash tests con procesos
-  reales y `SIGKILL`.
-- Tres entry points ESM/CJS con tipos, y contrato/documentación de
-  API/durabilidad/internals dentro del tarball.
-
-No contiene la costura del SDK v2, un driver de cliente, adaptadores de
-framework, stores compartidos ni transporte. `v0.1.0` es una GitHub Release
-pre-release y también la primera versión npm, publicada manualmente después del
-tag.
-
-## Resultado de la auditoría previa al tag
-
-Ejecutada el 10 de agosto de 2026 sobre la rama de preparación:
-
-- `pnpm test`: 10 ficheros, 256 tests en verde y 2 skips de capacidades
-  opcionales declarados por el kit.
-- Coverage: 93,66% statements, 84,17% branches, 91,62% functions y 94,47%
-  lines; supera los cuatro umbrales del repo.
-- `pnpm lint:package`: publint strict, ESM/CJS/tipos y smoke del tarball en
-  verde; 24 entradas, incluido el contrato público, y ningún source, test,
-  workflow o documento interno incluido.
-- `pnpm check:schema`: `schema.json` y `schema.ts` siguen alineados con
-  `modelcontextprotocol/ext-tasks`.
-- `pnpm audit --audit-level high`: ninguna vulnerabilidad conocida. No hay
-  dependencias de producción en el entry point principal; `process-wal` sigue
-  siendo peer opcional.
-- actionlint `1.7.12`: los cinco workflows son válidos.
-- Historial completo: sólo Andres Saa como autor, sin trailers ni mensajes de
-  atribución a modelos de IA, y sin tags o git notes ocultos.
-- README: enlaces locales resueltos, cinco referencias oficiales comprobadas
-  con HTTP 200 y navegación completa desde el índice.
-
-## Estado remoto comprobado el 10 de agosto de 2026
-
-- `AndresSaa/mcp-durable-tasks` es público y el PR #1 ya está fusionado en
-  `main`.
-- Issues y Discussions están activos; existen las categorías Q&A e Ideas que
-  enlazan las plantillas del repo.
-- El ruleset `main` está activo. Faltan descripción, topics, homepage y
-  desactivar merge commits/rebase merge y Projects.
-- No existe ningún tag y `mcp-durable-tasks` sigue libre en el registro npm.
-- La ejecución de CodeQL del PR #1 se omitió cuando el repo aún era privado;
-  el workflow tiene trigger manual para ejecutarlo ahora que es público.
+Los pasos de `v0.1.0` (squash previo, primer PR, bootstrap de npm) ya se ejecutaron y se conservan como registro de lo que hay que repetir si algún día se rehace el repo. Las versiones nuevas solo usan el [gate local](#gate-local-antes-de-subir) y [las releases automatizadas](#releases-automatizadas-desde-v020).
 
 ## Gate local antes de subir
 
@@ -72,12 +19,10 @@ corepack pnpm audit --audit-level high
 git status --short
 ```
 
-`check:schema` toca red y confirma que los tres fixtures vendorizados
-(`schema/2026-07-28/`) no han derivado; además informa, sin fallar nunca, si el
-`draft` de upstream ya difiere del snapshot. `lint:package` analiza los tipos, empaqueta e instala el tarball real
-sin `process-wal`, tanto en ESM como en CJS.
+- `check:schema` usa la red. Confirma que los fixtures vendorizados (`schema/2026-07-28/`) no derivaron e informa, sin fallar nunca, si el `draft` de upstream ya difiere del snapshot. No corre en CI.
+- `lint:package` analiza los tipos, empaqueta e instala el tarball real sin `process-wal`, en ESM y en CJS.
 
-Para volver a auditar sólo la atribución de los commits:
+Para auditar solo la atribución de los commits. La salida correcta es vacía:
 
 ```powershell
 $forbidden = '(?i)(co-authored-by:.*(claude|anthropic|codex|openai)|generated (with|by).*(claude|codex|openai)|ai[- ]generated)'
@@ -87,16 +32,11 @@ foreach ($sha in (git rev-list --all)) {
 }
 ```
 
-La salida correcta es vacía. Las referencias editoriales a herramientas o
-clientes en `AGENTS.md`, `docs/contract.md` o el README no son atribución de
-autoría.
+Las referencias editoriales a herramientas o clientes en `AGENTS.md`, `docs/contract.md` o el README no son atribución de autoría.
 
-## Archivo privado y squash previo al push
+## Solo `v0.1.0`: archivo privado y squash previo al push
 
-Los dos borradores personales se actualizan para el archivo del mantenedor,
-pero no se publican ni en el árbol ni en el historial alcanzable de la rama.
-Antes de ejecutar estos comandos, el mantenedor debe confirmar que ya guardó
-fuera del repositorio las copias actualizadas.
+Los dos borradores personales no se publican, ni en el árbol ni en el historial alcanzable. Antes de ejecutar estos comandos, el mantenedor confirma que ya guardó fuera del repositorio las copias actualizadas.
 
 ```powershell
 git fetch origin
@@ -109,10 +49,7 @@ git diff --cached --name-only
 git commit -m "feat: ship the v0.1.0 durable task engine"
 ```
 
-El `reset --soft` compacta toda la rama local sobre el `main` remoto. La
-segunda ejecución de `git add --all` incluye ficheros que antes eran untracked
-y conserva únicamente el estado final. Antes de cualquier push, estas tres
-comprobaciones deben pasar:
+`reset --soft` compacta la rama local sobre el `main` remoto. El segundo `git add --all` incluye lo que era untracked. Antes de cualquier push deben pasar estas tres comprobaciones:
 
 ```powershell
 git rev-list --count origin/main..HEAD
@@ -120,14 +57,11 @@ git log --format='%h %an <%ae> %s' origin/main..HEAD
 git rev-list --objects origin/main..HEAD | Select-String 'docs/(VISION|SPEC)\.md'
 ```
 
-La primera salida debe ser `1`; la segunda debe mostrar sólo el commit de
-lanzamiento; la tercera debe quedar vacía. No se crea una rama de backup: los
-commits anteriores quedan sólo en el reflog local y no se sube ninguna ref que
-los alcance.
+La primera debe dar `1`, la segunda solo el commit de lanzamiento y la tercera nada. No se crea rama de backup: los commits anteriores quedan solo en el reflog local.
 
 ## Push, PR y merge
 
-No se publica directamente desde la rama local. Primero:
+No se publica directamente desde la rama local:
 
 ```powershell
 corepack pnpm install --frozen-lockfile
@@ -141,11 +75,9 @@ gh pr create --base main --head chore/repo-foundations --title "feat: ship the v
 gh pr checks --watch
 ```
 
-Antes de ejecutar `gh pr create`, completar el template con resultados reales;
-no enviar un cuerpo vacío ni texto de plantilla sin editar. No lleva `!`: no
-existe una versión pública anterior cuyo contrato esté rompiendo.
+El cuerpo del PR lleva resultados reales, no texto de plantilla sin editar. El título no lleva `!`: no hay versión pública anterior cuyo contrato se rompa.
 
-Tras la matriz verde, squash-merge desde GitHub o con:
+Con la matriz en verde, squash-merge desde GitHub o con:
 
 ```powershell
 gh pr merge --squash --delete-branch
@@ -155,9 +87,7 @@ git pull --ff-only origin main
 
 ## About, features y topics
 
-La descripción debe diferenciar la librería del namespace de gestores de
-tareas. La homepage queda vacía hasta completar la publicación manual de
-`v0.1.0` en npm y se añade inmediatamente después.
+La descripción debe diferenciar la librería del namespace de gestores de tareas. La homepage queda vacía hasta publicar `v0.1.0` en npm.
 
 ```powershell
 gh repo edit AndresSaa/mcp-durable-tasks `
@@ -184,14 +114,9 @@ gh repo edit AndresSaa/mcp-durable-tasks `
   --add-topic zero-dependency
 ```
 
-`process-wal` mantiene Issues y Discussions, y este repo también: Q&A sirve
-para integración y Ideas para discutir alcance antes de abrir una feature. La
-diferencia intencionada es dejar sólo squash merge, porque aquí el título del
-PR es el commit de `main` y lo valida CI. No hacen falta Projects ni Wiki; el
-roadmap y la documentación ya tienen dueños claros dentro del repo.
+Solo squash merge, porque el título del PR es el commit de `main` y CI lo valida. No hacen falta Projects ni Wiki. Issues y Discussions siguen activos: Q&A para integración e Ideas para discutir alcance antes de abrir una feature; las plantillas del repo enlazan ambas categorías.
 
-Con el repositorio ya público, completar los controles de seguridad y ejecutar
-CodeQL:
+Con el repositorio ya público, activar los controles de seguridad y ejecutar CodeQL (su ejecución se omite mientras el repo es privado):
 
 ```powershell
 gh api --method PUT repos/AndresSaa/mcp-durable-tasks/vulnerability-alerts
@@ -202,8 +127,7 @@ $codeqlRun = gh run list --repo AndresSaa/mcp-durable-tasks --workflow codeql.ym
 gh run watch $codeqlRun --repo AndresSaa/mcp-durable-tasks --exit-status
 ```
 
-Una discusión inicial en Announcements es útil; Q&A e Ideas ya están enlazadas
-desde las plantillas:
+Discusión inicial en Announcements:
 
 ```powershell
 gh discussion create -R AndresSaa/mcp-durable-tasks --category Announcements --title "v0.1.0: first public release" --body "The engine, both stores, conformance kit and crash tests are available in the first public release. The npm bootstrap is published manually; later versions use trusted publishing with provenance."
@@ -211,26 +135,18 @@ gh discussion create -R AndresSaa/mcp-durable-tasks --category Announcements --t
 
 ## Protección de `main`
 
-El ruleset `main` (`20643761`) está activo sobre la rama por defecto: prohíbe
-borrados y non-fast-forward, exige PR con squash y requiere que la rama esté al
-día. Los seis checks estables Node 22/24 y `lint-title` están configurados como
-obligatorios. Node 26 es informativo; CodeQL y Socket Security no se convierten
-en puntos únicos de bloqueo externos.
+El ruleset `main` (`20643761`) prohíbe borrados y non-fast-forward, exige PR con squash y rama al día. Son obligatorios los seis checks estables de Node 22/24 y `lint-title`. Node 26 es informativo; CodeQL y Socket Security no bloquean.
 
 ```powershell
 gh api repos/AndresSaa/mcp-durable-tasks/rulesets/20643761 `
   --jq '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
 ```
 
-`lint-title` solo pudo añadirse después de mergear el primer PR: antes no
-existía en `main`, porque `pull_request_target` carga el workflow desde la rama
-base. Para todas las ramas siguientes es el séptimo check obligatorio, igual
-que en `process-wal`.
+`lint-title` solo pudo añadirse después de fusionar el primer PR: `pull_request_target` carga el workflow desde la rama base, y hasta entonces no existía en `main`.
 
 ## Tag y GitHub Release `v0.1.0`
 
-Comprobar que `main` contiene `package.json` en `0.1.0` y la sección
-`CHANGELOG.md` correspondiente. Luego:
+`main` debe tener `package.json` en `0.1.0` y la sección correspondiente de `CHANGELOG.md`.
 
 ```powershell
 git switch main
@@ -244,20 +160,11 @@ gh run watch $runId --exit-status
 gh release view v0.1.0
 ```
 
-El workflow debe ejecutar todos los gates, registrar que la publicación npm de
-esta versión es manual y crear una GitHub Release marcada pre-release. Un
-workflow rojo aquí es bloqueo del tag, no un resultado aceptable.
+El workflow ejecuta todos los gates, registra que la publicación npm de esta versión es manual y crea una GitHub Release marcada pre-release. Un workflow rojo bloquea el tag.
 
 ## Primera publicación npm: `v0.1.0`, manual
 
-La primera versión del registro es manual por decisión del mantenedor y porque
-npm no permite vincular un Trusted Publisher a un paquete que aún no existe.
-Se publica desde el tag exacto, con cuenta protegida por 2FA y provenance
-desactivado explícitamente: una máquina local no puede producir la atestación
-de GitHub Actions. pnpm sigue siendo dueño de la instalación y de todos los
-scripts del repo; este bootstrap usa excepcionalmente el CLI de npm para su
-flujo de autenticación web y para sobrescribir de forma explícita el
-`publishConfig.provenance: true` que usarán las versiones automatizadas.
+Es manual porque npm no permite vincular un Trusted Publisher a un paquete que aún no existe. Se publica desde el tag exacto, con cuenta protegida por 2FA y provenance desactivado: una máquina local no puede producir la atestación de GitHub Actions. pnpm sigue siendo dueño de la instalación y de los scripts; este bootstrap usa el CLI de npm solo para el login web y para sobrescribir `publishConfig.provenance: true`.
 
 ```powershell
 git switch main
@@ -275,78 +182,43 @@ npm publish --access public --provenance=false
 npm view mcp-durable-tasks@0.1.0 name version dist-tags repository --json
 ```
 
-No pasar `--otp`: con una security key/WebAuthn configurada, npm abre el enlace
-de autorización y el reto se confirma en el navegador. Si la cuenta sólo tiene
-TOTP, el registro pedirá necesariamente el código; `--auth-type=web` no cambia
-el segundo factor configurado en la cuenta.
+- No pasar `--otp`. Con security key/WebAuthn, npm abre el enlace de autorización y el reto se confirma en el navegador. Si la cuenta solo tiene TOTP, el registro pide el código igualmente.
+- `--provenance=false` es obligatorio en ambos comandos de publicación. Sin él, `publishConfig` intenta generar una atestación local y falla porque no hay proveedor CI.
+- No guardar tokens en GitHub ni en ficheros del repo.
 
-No guardar tokens en GitHub ni en ficheros del repo. `--provenance=false` es
-obligatorio en ambos comandos de publicación; omitirlo hace que el
-`publishConfig` intente generar una atestación local y falle porque no existe
-un proveedor CI. Tras comprobar que `0.1.0` existe:
+Cuando `0.1.0` exista en el registro:
 
 1. npmjs.com → package → Settings/Access → Trusted Publisher.
-2. Vincular GitHub Actions con owner `AndresSaa`, repo
-   `mcp-durable-tasks`, workflow `release.yml`, sin environment.
-3. Activar la automatización posterior:
+2. Vincular GitHub Actions con owner `AndresSaa`, repo `mcp-durable-tasks`, workflow `release.yml`, sin environment.
+3. Activar la automatización:
 
    ```powershell
    npm trust github mcp-durable-tasks --file release.yml --repo AndresSaa/mcp-durable-tasks --allow-publish --yes
    gh variable set NPM_TRUSTED_PUBLISHING --repo AndresSaa/mcp-durable-tasks --body enabled
    ```
 
-4. `v0.2.0` usa el cliente npm fijado en `release.yml`, OIDC y provenance
-   automática. El workflow falla, en vez de omitir npm silenciosamente, si la
-   variable no está activa. Sólo después de una publicación OIDC verde se
-   restringen/revocan credenciales de automatización antiguas.
+4. Tras una publicación OIDC verde (`v0.2.0`), restringir o revocar las credenciales de automatización antiguas, si queda alguna.
+5. Cerrar la sesión local revoca el token del login web:
 
-Cuando el Trusted Publisher esté configurado, cerrar la sesión local revoca el
-token creado por el login web:
+   ```powershell
+   npm logout --registry=https://registry.npmjs.org/
+   ```
 
-```powershell
-npm logout --registry=https://registry.npmjs.org/
-```
+6. Completar el About:
 
-`v0.1.0` no tendrá provenance y queda documentada como la única excepción. Para
-`v0.2.0` y versiones posteriores, verificar la atestación en npmjs.com o desde un
-directorio temporal instalado con npm; `npm audit signatures` necesita el
-lockfile de npm y por eso no se ejecuta sobre este workspace pnpm.
+   ```powershell
+   gh repo edit AndresSaa/mcp-durable-tasks --homepage https://www.npmjs.com/package/mcp-durable-tasks
+   ```
 
-Al publicar `v0.1.0`, completar el About:
+`v0.1.0` no tiene provenance y es la única excepción.
 
-```powershell
-gh repo edit AndresSaa/mcp-durable-tasks --homepage https://www.npmjs.com/package/mcp-durable-tasks
-```
+## Releases automatizadas desde `v0.2.0`
 
-## `v0.2.0`: primera publicación automática con provenance
-
-`v0.2.0` es la versión que estrena el camino que `v0.1.0` sólo dejó preparado:
-el tag dispara `release.yml`, el workflow intercambia el token OIDC con el
-registro y npm genera la atestación de procedencia. No hay ningún paso manual
-de publicación, y no debe haberlo: si hiciera falta, la variable
-`NPM_TRUSTED_PUBLISHING` estaría mintiendo.
-
-### Qué contiene
-
-No contiene cambios en `src/`. El motor publicado es byte a byte el mismo
-código que `v0.1.0`; lo que cambia es lo que el paquete afirma sobre sí mismo y
-la evidencia ejecutable de que la afirmación central se sostiene:
-
-- `examples/crash-recovery/`, un servidor MCP real cuya task sobrevive a
-  `SIGKILL`, con asserts sobre el estado recuperado y ejecución en cada PR.
-- `examples/conformance-reproductions/`, las tres reproducciones congeladas de
-  los hallazgos ya reportados aguas arriba.
-- La corrección del perfil de compatibilidad del SDK en `docs/contract.md` y
-  `docs/internals.md`, que van dentro del tarball.
-- El banner del README, que en `v0.1.0` no resuelve en la página de npm. npm
-  congela el README publicado, así que ésta es la primera versión donde el
-  arreglo llega al registro.
+Desde `v0.2.0` el tag dispara `release.yml`, que cambia el token OIDC por acceso al registro, y npm genera la atestación de procedencia. No hay ningún paso manual de publicación. Si hiciera falta uno, la variable `NPM_TRUSTED_PUBLISHING` estaría mintiendo.
 
 ### Requisito previo que el workflow no puede comprobar
 
-El Trusted Publisher tiene que estar vinculado en npm antes del tag. La
-variable de repositorio sólo declara la intención; quien autoriza es el
-registro. Comprobarlo con la cuenta iniciada:
+El Trusted Publisher tiene que estar vinculado en npm antes del tag. La variable de repositorio solo declara la intención; quien autoriza es el registro.
 
 ```powershell
 npm login --auth-type=web --registry=https://registry.npmjs.org/
@@ -354,63 +226,23 @@ npm trust list mcp-durable-tasks
 npm logout --registry=https://registry.npmjs.org/
 ```
 
-Debe aparecer una relación con owner `AndresSaa`, repositorio
-`mcp-durable-tasks`, workflow `release.yml` y sin environment. Si no aparece,
-el tag fallará en el paso de publicación con la versión ya inmutable en el
-historial de tags, y habrá que borrar el tag y repetir.
+Debe aparecer owner `AndresSaa`, repositorio `mcp-durable-tasks`, workflow `release.yml` y sin environment. Si no aparece, el tag falla al publicar con la versión ya registrada en el historial de tags, y hay que borrar el tag y repetir.
 
-### Secuencia
+### PR de versión
 
-```powershell
-git switch main
-git pull --ff-only origin main
-if (git status --porcelain) { throw "main must be clean before tagging" }
-if ((node -p "require('./package.json').version") -ne "0.2.0") { throw "package.json is not 0.2.0" }
-git tag v0.2.0
-git push origin v0.2.0
-$runId = gh run list --workflow release.yml --branch v0.2.0 --event push --limit 1 --json databaseId --jq '.[0].databaseId'
-gh run watch $runId --exit-status
-```
+Cada versión se prepara en un PR ordinario `chore: release X.Y.Z` que actualiza `package.json`, cierra su sección de `CHANGELOG.md` y sincroniza cualquier versión visible en los docs. No se crea el tag desde la rama del PR ni se publica a mano en npm. El [contrato de versiones](./contract.md#version-contract) decide si toca patch o minor: antes de `1.0.0`, un cambio incompatible es minor aunque no añada features.
 
-### Verificación posterior
+Antes de abrirlo, el [gate local](#gate-local-antes-de-subir) completo tiene que estar en verde sobre la rama, incluido `check:schema`.
 
-```powershell
-npm view mcp-durable-tasks@0.2.0 version dist-tags
-gh release view v0.2.0
-```
+### Tag y publicación
 
-La atestación se comprueba en la página del paquete en npmjs.com, que debe
-mostrar el enlace de provenance apuntando al run de `release.yml` de este
-repositorio. `npm audit signatures` sigue sin ejecutarse aquí: necesita un
-lockfile de npm y este workspace es de pnpm.
-
-Sólo después de un run verde se revocan las credenciales de automatización
-antiguas, si quedara alguna del bootstrap manual.
-
-## Releases automatizadas posteriores a `v0.2.0`
-
-Toda versión posterior a `v0.2.0`, patch o minor, se prepara en un PR
-ordinario (`chore: release X.Y.Z`) que actualiza `package.json`, cierra su
-sección en `CHANGELOG.md` y sincroniza cualquier versión visible en los docs.
-No se crea el tag desde la rama del PR y no se publica manualmente en npm. El
-[contrato de versiones](./contract.md#version-contract) decide si toca patch o
-minor: antes de `1.0.0`, cualquier cambio incompatible es minor, aunque no
-añada features. Por eso el endurecimiento posterior a `v0.2.1` sale como
-`v0.3.0` y no como `v0.2.2`.
-
-Antes de abrir el PR de versión, el gate local completo de
-[más arriba](#gate-local-antes-de-subir) tiene que estar en verde sobre la rama,
-incluido `check:schema`, que no corre en CI.
-
-Después de fusionar el PR de versión, la secuencia es la misma para cada
-versión; sólo cambia `$releaseVersion`. `v0.2.1` la usó con `"0.2.1"` y
-`v0.3.0` la usa con `"0.3.0"`:
+Tras fusionar el PR de versión, la secuencia es la misma para cada versión; solo cambia `$releaseVersion`:
 
 ```powershell
 git switch main
 git pull --ff-only origin main
 if (git status --porcelain) { throw "main must be clean before tagging" }
-$releaseVersion = "0.3.0"
+$releaseVersion = "0.4.0"  # la versión que se publica
 if ((node -p "require('./package.json').version") -ne $releaseVersion) { throw "package.json version mismatch" }
 if (-not (Select-String -Quiet -LiteralPath CHANGELOG.md -SimpleMatch "## [$releaseVersion]")) { throw "CHANGELOG section missing" }
 $releaseTag = "v$releaseVersion"
@@ -422,6 +254,4 @@ corepack pnpm view "mcp-durable-tasks@$releaseVersion" version dist-tags --json
 gh release view $releaseTag
 ```
 
-El workflow vuelve a ejecutar lint, cobertura y validación del tarball antes de
-publicar. La página de npm debe mostrar provenance apuntando al run de
-`release.yml` del tag exacto.
+El workflow vuelve a ejecutar lint, cobertura y validación del tarball antes de publicar. La página del paquete en npmjs.com debe mostrar el enlace de provenance al run de `release.yml` del tag exacto. `npm audit signatures` no se ejecuta aquí: necesita un lockfile de npm y este workspace es de pnpm. Para verificar desde fuera, instalar el paquete con npm en un directorio temporal.
