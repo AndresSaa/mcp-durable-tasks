@@ -6,6 +6,10 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-15
+
+Closes the known issues of `0.3.0` and the input-round races two further audits found in the fixes. Several entries are breaking, so it is a minor release. No new protocol feature was added.
+
 ### Added
 
 - A worker's `handle.signal` is now aborted when its task's TTL elapses, with a `TaskNotFoundError` as the reason. A worker that checks `signal.aborted` to detect cancellation should also check `signal.reason.name`; a cancelled task keeps its `TaskCancelled` reason. Nothing is written and the wire is unchanged; the abort is cooperative, process-local and never happens for `ttlMs: null`.
@@ -51,7 +55,7 @@ A hardening release: it closes the findings of an independent audit and aligns i
 
 ### Known issues
 
-- Input responses do not survive a restart: if the process that owned a worker dies while its task is `input_required`, a client reply sent before a new worker asks again is acknowledged but never reaches a worker. A restarted worker has to start a new round with new keys. Fixed under `[Unreleased]`, as are the three schema issues this release listed (`fail()` accepting any object, a non-string tool-schema `$schema`, and the `execution.taskSupport` check).
+- Input responses do not survive a restart: if the process that owned a worker dies while its task is `input_required`, a client reply sent before a new worker asks again is acknowledged but never reaches a worker. A restarted worker has to start a new round with new keys. Fixed in `0.4.0`, as are the three schema issues this release listed (`fail()` accepting any object, a non-string tool-schema `$schema`, and the `execution.taskSupport` check).
 
 ## [0.2.1] - 2026-08-11
 
@@ -117,7 +121,8 @@ First public release, followed by a one-time manual npm publication to establish
 - CAS conflicts are recognized by error name, so duplicated installs do not break retries.
 - Worker coordination is process-local: a multi-instance host needs request affinity for live workers.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.1.0...v0.2.0

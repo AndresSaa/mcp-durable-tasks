@@ -49,7 +49,7 @@ The extension is built for this. Over Streamable HTTP, the client sends the task
 
 ## Status
 
-The current release is `v0.3.0`: the engine, both stores, the conformance kit, property-based and crash tests, and a runnable crash-recovery example. It has breaking changes from earlier versions; before `1.0.0` those are minor releases. The [changelog](CHANGELOG.md) lists them and the known issues still open. Releases since `v0.2.0` are published from GitHub Actions with npm trusted publishing and provenance. `v0.1.0` was published by hand, once, to create the package.
+The current release is `v0.4.0`: the engine, both stores, the conformance kit, property-based and crash tests, and a runnable crash-recovery example. It has breaking changes from earlier versions; before `1.0.0` those are minor releases. The [changelog](CHANGELOG.md) lists them. Releases since `v0.2.0` are published from GitHub Actions with npm trusted publishing and provenance. `v0.1.0` was published by hand, once, to create the package.
 
 The public API may still change before `1.0.0`. The roadmap and the open questions about the extension are in the [contract](docs/contract.md).
 
@@ -82,7 +82,7 @@ To run a release's tests from source, you need Node.js 22.13 or newer (the repos
 ```sh
 git clone https://github.com/AndresSaa/mcp-durable-tasks.git
 cd mcp-durable-tasks
-git checkout v0.3.0
+git checkout v0.4.0
 corepack pnpm install --frozen-lockfile
 corepack pnpm test
 ```
