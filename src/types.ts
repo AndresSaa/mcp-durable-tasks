@@ -496,10 +496,12 @@ export interface TaskHandle {
   /**
    * Claims the answers to a round that was completed while no worker in this
    * process was waiting for it, typically because the process that asked
-   * was restarted. Resolves with those responses exactly once, then with
+   * was restarted. Resolves with those responses at most once, then with
    * `undefined`; with `undefined` straight away when there is nothing to
    * claim, without writing. The claim is a compare-and-swap write, so two
-   * concurrent callers cannot both receive the same answers.
+   * concurrent callers cannot both receive the same answers. If the process
+   * dies after the claim, the answers are gone; save what the worker needs
+   * from them before relying on them.
    *
    * A restarted worker calls this before it asks again: opening a new round
    * with `requestInput()` discards unclaimed answers, and the old keys stay

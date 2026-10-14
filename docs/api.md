@@ -130,7 +130,7 @@ async function work(task: TaskHandle) {
 | `signal`                          | `AbortSignal`                                                 | Raised by `tasks/cancel` or TTL expiry. Cooperative: nothing is killed                    |
 | `progress(statusMessage, patch?)` | `patch?: { pollIntervalMs?: number; ttlMs?: number \| null }` | Sets `statusMessage`; optionally revises the hints. Invalid input: whole call not applied |
 | `requestInput(requests)`          | `→ Promise<InputResponses>`                                   | Parks in `input_required`; resolves when every key is answered                            |
-| `resumeInput()`                   | `→ Promise<InputResponses \| undefined>`                      | Claims answers that arrived while no worker waited, exactly once                          |
+| `resumeInput()`                   | `→ Promise<InputResponses \| undefined>`                      | Claims answers that arrived while no worker waited, at most once                          |
 | `complete(result)`                | `result: JsonObject`                                          | Terminal                                                                                  |
 | `fail(error)`                     | `error: TaskError`                                            | Terminal. A JSON-RPC error: integer `code`, string `message`                              |
 | `cancelled(statusMessage?)`       | `statusMessage?: string`                                      | Terminal. Acknowledges a cancellation the worker chose to honour                          |
@@ -180,7 +180,7 @@ async function resume(task: TaskHandle) {
 }
 ```
 
-- Resolves with the kept responses **exactly once**: the claim is a compare-and-swap write that removes them, even across instances on a shared store.
+- Resolves with the kept responses **at most once**: the claim is a compare-and-swap write that removes them, even across instances on a shared store. If the process dies after the claim and before the worker acts on them, they are gone and the keys stay spent, so save the worker's progress before relying on a claim.
 - Resolves with `undefined`, writing nothing, when there is nothing to claim.
 - Throws like any write: `TaskNotFoundError` for a missing or expired task, `TaskAlreadyTerminalError` for a finished one.
 - **Call it before `requestInput()`.** A new round, or the end of the task, drops unclaimed answers. The old keys stay spent (I5).

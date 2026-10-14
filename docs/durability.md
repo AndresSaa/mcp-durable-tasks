@@ -83,11 +83,12 @@ A failed automatic compaction never fails the mutation that triggered it: that w
 
 **Worker coordination is process-local.** The `requestInput()` promise and the `AbortSignal` live in the worker's process. After a crash the task state is there, but the suspended function call cannot be resumed.
 
-**Input responses do survive.** The store keeps the outstanding requests, partial responses and the lifetime key ledger. When a reply completes a round and no worker in this process is waiting (as after a restart), the write that moves the task to `working` also stores the answers in the internal `unclaimedInputResponses` field, at the same boundary as every other write. A restarted worker claims them once with [`resumeInput()`](api.md#resumeinput); the claim survives a crash on either side of its commit. Clients see nothing new on the wire.
+**Input responses do survive.** The store keeps the outstanding requests, partial responses and the lifetime key ledger. When a reply completes a round and no worker in this process is waiting (as after a restart), the write that moves the task to `working` also stores the answers in the internal `unclaimedInputResponses` field, at the same boundary as every other write. A restarted worker claims them once with [`resumeInput()`](api.md#resumeinput). The claim itself survives a crash on either side of its commit, but delivery is at most once: the claim removes the answers before the worker uses them. Clients see nothing new on the wire.
 
 Still lost:
 
 - a round that `0.3.0` or earlier completed with no worker, since that log holds no answers;
+- answers already claimed with `resumeInput()`, if the process dies before the worker acts on them; the keys stay spent;
 - answers whose waiter was rejected just after the reply committed, if the process dies or the lifecycle closes before the follow-up write that keeps them ([contract](contract.md#input-rounds)).
 
 `test/crash.test.ts` kills the process after the reply and again after the claim; `test/wal-store.test.ts` covers replay and a `0.3.0` log.

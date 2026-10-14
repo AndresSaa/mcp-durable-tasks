@@ -9,7 +9,7 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 ### Added
 
 - A worker's `handle.signal` is now aborted when its task's TTL elapses, with a `TaskNotFoundError` as the reason. A worker that checks `signal.aborted` to detect cancellation should also check `signal.reason.name`; a cancelled task keeps its `TaskCancelled` reason. Nothing is written and the wire is unchanged; the abort is cooperative, process-local and never happens for `ttlMs: null`.
-- `TaskHandle.resumeInput()` lets a restarted worker pick up input a client sent while no worker was running. It returns those answers exactly once, or `undefined`, so call it first after a restart. This closes the `0.3.0` known issue "Input responses do not survive a restart" for rounds completed from now on; a log written by `0.3.0` opens unchanged.
+- `TaskHandle.resumeInput()` lets a restarted worker pick up input a client sent while no worker was running. It returns those answers at most once, or `undefined`, so call it first after a restart; if the process dies after the claim, they are gone. This closes the `0.3.0` known issue "Input responses do not survive a restart" for rounds completed from now on; a log written by `0.3.0` opens unchanged.
 - **Breaking for third-party stores:** a `TaskStore` must persist the new record field `unclaimedInputResponses` through `create()`, `update()`, `get()` and reopen. The conformance kit has new checks for it. Both included stores pass unchanged, and code that implements `TaskHandle` itself must add `resumeInput()`.
 
 ### Fixed
