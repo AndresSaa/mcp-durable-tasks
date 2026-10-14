@@ -7,6 +7,10 @@ interface Waiter {
   token: symbol;
   /** The keys of the round this waiter asked for. */
   keys: ReadonlySet<string>;
+  /** Its own round has committed, so a reply may be delivered to it. */
+  armed: boolean;
+  /** A reply completed its round before it was armed; the answers were kept. */
+  missed: boolean;
   promise: Promise<InputResponses>;
   resolve: (responses: InputResponses) => void;
   reject: (error: unknown) => void;
@@ -78,14 +82,45 @@ export class WorkerCoordinator {
     return this.#controller(taskId).signal;
   }
 
-  /** Whether a waiter here asked for exactly the round with these keys. */
+  /**
+   * Whether an armed waiter here asked for exactly the round with these keys.
+   * A waiter whose own round has not committed yet is not a delivery target:
+   * its write may still fail (a spent key, a lost race), and answers handed
+   * to it would then be lost.
+   */
   awaits(taskId: string, keys: readonly string[]): boolean {
     const waiter = this.#waiters.get(taskId);
-    return (
-      waiter !== undefined &&
-      waiter.keys.size === keys.length &&
-      keys.every((key) => waiter.keys.has(key))
-    );
+    return waiter !== undefined && waiter.armed && sameKeys(waiter.keys, keys);
+  }
+
+  /**
+   * Marks a registration's round as committed. Returns true if a reply
+   * completed that round first, so its answers are waiting to be claimed.
+   */
+  arm(registration: WaitRegistration): boolean {
+    const waiter = this.#waiters.get(registration.taskId);
+    if (waiter?.token !== registration.token) return false;
+    waiter.armed = true;
+    return waiter.missed;
+  }
+
+  /**
+   * Called after a reply's answers were kept because no armed waiter asked
+   * for its round. If a waiter for that round exists and is armed by now, it
+   * is returned so the caller can claim the answers for it; if it is not
+   * armed yet, it is marked so that `arm()` reports it.
+   */
+  missed(
+    taskId: string,
+    keys: readonly string[],
+  ): WaitRegistration | undefined {
+    const waiter = this.#waiters.get(taskId);
+    if (waiter === undefined || !sameKeys(waiter.keys, keys)) return undefined;
+    if (!waiter.armed) {
+      waiter.missed = true;
+      return undefined;
+    }
+    return { taskId, token: waiter.token, promise: waiter.promise };
   }
 
   register(taskId: string, keys: readonly string[]): WaitRegistration {
@@ -114,6 +149,8 @@ export class WorkerCoordinator {
     const waiter: Waiter = {
       token,
       keys: new Set(keys),
+      armed: false,
+      missed: false,
       promise,
       resolve,
       reject,
@@ -131,13 +168,14 @@ export class WorkerCoordinator {
   }
 
   /**
-   * Hands a completed round to the waiter that asked for it. A waiter for a
-   * different round (one registered while its own round was still being
-   * written) is left alone: those answers are not the ones it asked for.
+   * Hands a completed round to the armed waiter that asked for it, and
+   * returns whether it did. A waiter for a different round is left alone:
+   * those answers are not the ones it asked for.
    */
-  resolve(taskId: string, responses: InputResponses): void {
-    if (!this.awaits(taskId, Object.keys(responses))) return;
+  resolve(taskId: string, responses: InputResponses): boolean {
+    if (!this.awaits(taskId, Object.keys(responses))) return false;
     this.#take(taskId)?.resolve(structuredClone(responses));
+    return true;
   }
 
   finish(taskId: string, error: unknown): void {
@@ -301,4 +339,8 @@ export class WorkerCoordinator {
       },
     );
   }
+}
+
+function sameKeys(set: ReadonlySet<string>, keys: readonly string[]): boolean {
+  return set.size === keys.length && keys.every((key) => set.has(key));
 }

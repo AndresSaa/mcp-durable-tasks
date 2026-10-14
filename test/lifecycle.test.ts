@@ -11,6 +11,7 @@ import {
   type InputRequest,
   type TaskError,
   type TaskHandle,
+  type TaskPatch,
   type TaskRecord,
   type TaskStore,
 } from "../src/index.js";
@@ -88,6 +89,64 @@ async function untilParked(engine: TaskLifecycle, taskId: string) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`task ${taskId} never reached input_required`);
+}
+
+/**
+ * A MemoryTaskStore that can hold back its next get(), or the return of its
+ * next update() after the update has committed, so a test can place another
+ * operation exactly inside that gap.
+ */
+class GatedStore implements TaskStore {
+  readonly inner = new MemoryTaskStore();
+  #getGate: Promise<void> | undefined;
+  #updateGate: Promise<void> | undefined;
+
+  holdNextGet(): () => void {
+    let release!: () => void;
+    this.#getGate = new Promise((resolve) => (release = resolve));
+    return release;
+  }
+
+  /** The update commits at once; only its return is held. */
+  holdNextUpdate(): () => void {
+    let release!: () => void;
+    this.#updateGate = new Promise((resolve) => (release = resolve));
+    return release;
+  }
+
+  create(record: TaskRecord) {
+    return this.inner.create(record);
+  }
+
+  async get(taskId: string) {
+    const gate = this.#getGate;
+    this.#getGate = undefined;
+    if (gate !== undefined) await gate;
+    return this.inner.get(taskId);
+  }
+
+  async update(taskId: string, patch: TaskPatch, expectedVersion: number) {
+    const gate = this.#updateGate;
+    this.#updateGate = undefined;
+    const committed = await this.inner.update(taskId, patch, expectedVersion);
+    if (gate !== undefined) await gate;
+    return committed;
+  }
+
+  sweep(now?: number) {
+    return this.inner.sweep(now);
+  }
+
+  close() {
+    return this.inner.close();
+  }
+}
+
+/** Lets every queued promise continuation run. */
+async function settle() {
+  for (let index = 0; index < 20; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 describe("createTask (I1)", () => {
@@ -873,10 +932,10 @@ describe("the inputRequests round trip", () => {
 // worker claims it with resumeInput(); the task moves to working as before.
 describe("input responses that arrive with no worker", () => {
   /** A task parked by a process that is gone: no waiter here. */
-  async function orphanedRound(
+  async function orphanedRound<S extends TaskStore = MemoryTaskStore>(
     requests: Record<string, InputRequest> = { a: ROOTS, b: ROOTS },
+    store: S = new MemoryTaskStore() as unknown as S,
   ) {
-    const store = new MemoryTaskStore();
     const stamp = new Date().toISOString();
     await store.create({
       taskId: "t",
@@ -1047,6 +1106,69 @@ describe("input responses that arrive with no worker", () => {
     });
     await engine.updateTask("t", { c: rootsResponse() });
     await expect(next).resolves.toEqual({ c: { roots: [] } });
+    await engine.close();
+  });
+
+  it("keeps a reply that lands while a restarted worker re-asks with a spent key", async () => {
+    const store = new GatedStore();
+    const { engine, handle } = await orphanedRound({ a: ROOTS }, store);
+    // The waiter registers at once, but its write has not read the record yet.
+    const release = store.holdNextGet();
+    const ask = handle.requestInput({ a: ROOTS });
+    const settled = ask.then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+
+    await engine.updateTask("t", { a: rootsResponse() });
+    release();
+
+    expect(await settled).toBeInstanceOf(DuplicateInputKeyError);
+    await expect(handle.resumeInput()).resolves.toEqual({ a: { roots: [] } });
+    await engine.close();
+  });
+
+  it("delivers a reply that lands before this process sees its own round commit", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const release = store.holdNextUpdate();
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+
+    await engine.updateTask(taskId, { a: rootsResponse() });
+    release();
+
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    await expect(handle.resumeInput()).resolves.toBeUndefined();
+    await engine.close();
+  });
+
+  it("delivers a reply when the round's commit is seen while the reply is being written", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const releaseRound = store.holdNextUpdate();
+    const answers = handle.requestInput({ a: ROOTS });
+    await untilParked(engine, taskId);
+
+    const releaseReply = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    releaseRound();
+    await settle();
+    releaseReply();
+    await update;
+
+    await expect(answers).resolves.toEqual({ a: { roots: [] } });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
     await engine.close();
   });
 });

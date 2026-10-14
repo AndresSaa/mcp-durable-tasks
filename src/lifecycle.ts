@@ -36,9 +36,18 @@ import {
   assertSweepIntervalMs,
   assertTtlMs,
 } from "./validation.js";
-import { WorkerCoordinator } from "./worker-coordinator.js";
+import {
+  WorkerCoordinator,
+  type WaitRegistration,
+} from "./worker-coordinator.js";
 
 const DEFAULT_TTL_MS = 3_600_000;
+
+/** A round one `tasks/update` completed: delivered to a waiter, or kept. */
+interface CompletedRound {
+  responses: InputResponses;
+  kept: boolean;
+}
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
 /**
@@ -179,10 +188,10 @@ export class TaskLifecycle {
   ): Promise<UpdateTaskResult> {
     this.#assertOpen();
 
-    let settled: InputResponses | undefined;
+    let round: CompletedRound | undefined;
 
     try {
-      settled = await this.#applyInputResponses(taskId, inputResponses);
+      round = await this.#applyInputResponses(taskId, inputResponses);
     } catch (error) {
       // A terminal task has no outstanding keys, so *every* key in the update
       // is one the server should ignore — which makes this an empty
@@ -193,8 +202,13 @@ export class TaskLifecycle {
       if (!(error instanceof TaskAlreadyTerminalError)) throw error;
     }
 
-    if (settled !== undefined) {
-      this.#workers.resolve(taskId, settled);
+    if (round?.kept === false) {
+      this.#workers.resolve(taskId, round.responses);
+    } else if (round?.kept === true) {
+      // The waiter for this round may have committed it before this process
+      // saw the commit. It gets the answers once it is armed.
+      const late = this.#workers.missed(taskId, Object.keys(round.responses));
+      if (late !== undefined) await this.#claimFor(late);
     }
     return { resultType: "complete" };
   }
@@ -202,7 +216,7 @@ export class TaskLifecycle {
   async #applyInputResponses(
     taskId: string,
     inputResponses: Record<string, unknown>,
-  ): Promise<InputResponses | undefined> {
+  ): Promise<CompletedRound | undefined> {
     const outcome = await this.#mutateWithEffect(taskId, (record) => {
       if (record.status !== "input_required") return undefined;
 
@@ -222,10 +236,10 @@ export class TaskLifecycle {
       }
 
       // The round is complete, so the task moves to working whether or not a
-      // worker here asked for it: no request is outstanding any more. If one
-      // did, the answers go to it after the commit, exactly as before. If
-      // none did (the process that asked was restarted), they are retained
-      // off the wire until a worker claims them with resumeInput().
+      // worker here asked for it: no request is outstanding any more. If an
+      // armed waiter did, the answers go to it after the commit. Otherwise
+      // (the process that asked was restarted, or the waiter's own round has
+      // not committed yet) they are kept off the wire until claimed.
       const waiting = this.#workers.awaits(
         taskId,
         Object.keys(record.inputRequests ?? {}),
@@ -237,11 +251,45 @@ export class TaskLifecycle {
           inputResponses: undefined,
           ...(!waiting && { unclaimedInputResponses: merge.responses }),
         },
-        afterCommit: waiting ? merge.responses : undefined,
+        afterCommit: { responses: merge.responses, kept: !waiting },
       };
     });
 
     return outcome.changed ? outcome.afterCommit : undefined;
+  }
+
+  /**
+   * Claims kept answers for a waiter whose round they complete: a reply that
+   * committed before this process saw the waiter's own round commit.
+   */
+  async #claimFor(registration: WaitRegistration): Promise<void> {
+    const { taskId } = registration;
+    try {
+      const outcome = await this.#mutateWithEffect(taskId, (record) => {
+        const unclaimed = record.unclaimedInputResponses;
+        if (unclaimed === undefined) return undefined;
+        if (!this.#workers.awaits(taskId, Object.keys(unclaimed))) {
+          return undefined;
+        }
+        return {
+          patch: { unclaimedInputResponses: undefined },
+          afterCommit: unclaimed,
+        };
+      });
+      if (outcome.changed) {
+        this.#workers.resolve(taskId, outcome.afterCommit);
+      } else {
+        // Someone else claimed them with resumeInput(). The round is over, so
+        // nothing else would ever settle this waiter.
+        this.#workers.rejectRegistration(
+          registration,
+          new Error(`Input for task ${taskId} was already claimed`),
+        );
+      }
+    } catch (error) {
+      // The answers are still kept for resumeInput().
+      this.#workers.rejectRegistration(registration, error);
+    }
   }
 
   /**
@@ -311,6 +359,7 @@ export class TaskLifecycle {
       throw error;
     }
 
+    if (this.#workers.arm(registration)) await this.#claimFor(registration);
     return registration.promise;
   }
 
