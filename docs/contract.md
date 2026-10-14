@@ -139,12 +139,12 @@ A store persists every `TaskRecord` field, including internal ones it does not u
 
 A live worker's `AbortSignal` and its `requestInput()` promise belong to its process, even when the record is shared. While the worker lives, `tasks/update` and `tasks/cancel` must reach that instance. After a crash the application resumes from durable state, which includes answers retained for `resumeInput()` ([input rounds](#input-rounds)); JavaScript continuations are not durable.
 
-A lifecycle releases what it holds for a task (a raised cancellation signal whose worker is not, or not yet, running here, and any parked waiter) when the task goes terminal through it, when its TTL elapses by the lifecycle's clock, or on `close()`. Expiry is tracked from the newest record it read or committed, so a TTL revised by another instance is missed; worst case, a signal raised here is dropped at the old expiry, before a worker that never read it starts.
+A lifecycle releases what it holds for a task (a raised cancellation signal whose worker is not, or not yet, running here, and any parked waiter) when the task goes terminal through it, when its TTL elapses by the lifecycle's clock, or on `close()`. Expiry is tracked from the newest record it read or committed. When that expiry passes, one pure read confirms it first, so a TTL another instance extended or removed only costs a re-check at the old expiry. A TTL shortened elsewhere is noticed at the old expiry, or by the next write here.
 
 When a task's TTL elapses, the lifecycle also aborts the worker's signal with `TaskNotFoundError`, which is what the task now reads as. The extension leaves stopping work to the server: TTL bounds retention and exposure only ([ext-tasks#11](https://github.com/modelcontextprotocol/ext-tasks/issues/11)). The engine's policy is narrow:
 
 - Cooperative. Nothing is killed; a worker that ignores the signal keeps running, and its next write throws `TaskNotFoundError`.
-- Process-local. Only a worker in the process tracking the expiry is told, by that lifecycle's clock, following any TTL revised through it. A worker whose write finds the task already gone from the store gets its signal aborted the same way.
+- Process-local. Only a worker in the process tracking the expiry is told, by that lifecycle's clock and the stored TTL. A worker whose write finds the task already gone from the store gets its signal aborted the same way.
 - Nothing is written. No wire change, no new status; replay still discards the task.
 - A signal already raised by `tasks/cancel` keeps its `TaskCancelled` reason. A parked `requestInput()` is rejected exactly once, with the same error, before the signal is aborted.
 - Reading the signal before any write arms it with one pure read, so a worker that only reads its signal is told too. If the task is already gone, the signal aborts as soon as that read answers. `ttlMs: null` tasks are never aborted this way.

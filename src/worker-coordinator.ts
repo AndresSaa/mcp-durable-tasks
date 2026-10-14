@@ -1,4 +1,5 @@
 import { TaskNotFoundError } from "./errors.js";
+import { hasExpired } from "./record.js";
 import type { InputResponses, TaskRecord } from "./types.js";
 import { MAX_TIMER_MS } from "./validation.js";
 import { isTerminal } from "./wire.js";
@@ -53,7 +54,9 @@ export type RecordLookup = (taskId: string) => Promise<TaskRecord | undefined>;
  * At expiry the signal is aborted, not just dropped, so a worker that holds it
  * learns that its task is gone. The reason is the `TaskNotFoundError` the task
  * now reads as everywhere else. A signal already raised by a cancellation keeps
- * its first reason. This is cooperative and writes nothing.
+ * its first reason. This is cooperative and writes nothing. Another instance
+ * may have revised the TTL without this one seeing it, so the expiry is first
+ * confirmed with one pure read.
  */
 export class WorkerCoordinator {
   readonly #now: () => number;
@@ -257,13 +260,51 @@ export class WorkerCoordinator {
       if (this.#expiries.get(taskId) !== expiry) return;
       const remaining = expiresAt - this.#now();
       if (remaining <= 0) {
-        this.#expired(taskId, new TaskNotFoundError(taskId));
+        this.#confirmExpiry(taskId, expiry);
         return;
       }
       expiry.timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
       expiry.timer.unref?.();
     };
     schedule();
+  }
+
+  /**
+   * The tracked expiry has passed. One pure read (I3) decides: the task is
+   * released only if the store no longer has it or its stored TTL has
+   * elapsed by this clock; otherwise it is tracked again from that record.
+   * Without a lookup, or if the read fails, it is released.
+   */
+  #confirmExpiry(taskId: string, expiry: Expiry): void {
+    const current = () =>
+      !this.#closed && this.#expiries.get(taskId) === expiry;
+    const expire = () => this.#expired(taskId, new TaskNotFoundError(taskId));
+    if (this.#lookup === undefined) {
+      expire();
+      return;
+    }
+    let pending: Promise<TaskRecord | undefined>;
+    try {
+      pending = Promise.resolve(this.#lookup(taskId));
+    } catch {
+      expire();
+      return;
+    }
+    pending.then(
+      (record) => {
+        if (!current()) return;
+        if (record === undefined || hasExpired(record, this.#now())) {
+          expire();
+          return;
+        }
+        // The record may carry the version already tracked; let it re-arm.
+        this.#clearExpiry(taskId);
+        this.observe(record);
+      },
+      () => {
+        if (current()) expire();
+      },
+    );
   }
 
   /**

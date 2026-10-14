@@ -4,6 +4,7 @@ import {
   TaskNotFoundError,
   type TaskRecord,
 } from "../src/index.js";
+import { MAX_TIMER_MS } from "../src/validation.js";
 import { WorkerCoordinator } from "../src/worker-coordinator.js";
 
 // Process-local bookkeeping must be bounded by the life of the tasks it
@@ -367,6 +368,98 @@ describe("a signal read before any commit", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(signal.aborted).toBe(false);
     expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("re-checks the store at expiry and follows a TTL revised elsewhere", async () => {
+    const records = new Map([["t", record("t", 1_000)]]);
+    const lookup = lookupOf(records);
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    // Another instance extends the TTL; this one never sees the commit.
+    records.set("t", { ...record("t", 5_000), version: 4 });
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    current += 4_000;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps a timer longer than setTimeout allows split, and re-checks only at the end", async () => {
+    const ttlMs = 3 * MAX_TIMER_MS;
+    const lookup = lookupOf(new Map([["t", record("t", ttlMs)]]));
+    const workers = new WorkerCoordinator(now, lookup);
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (let step = 0; step < 2; step += 1) {
+      current += MAX_TIMER_MS;
+      await vi.advanceTimersByTimeAsync(MAX_TIMER_MS);
+      expect(vi.getTimerCount()).toBe(1);
+    }
+    expect(lookup).toHaveBeenCalledTimes(1);
+    current += MAX_TIMER_MS;
+    await vi.advanceTimersByTimeAsync(MAX_TIMER_MS);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("is released at expiry when the re-check read fails", async () => {
+    let fail = false;
+    const workers = new WorkerCoordinator(now, async (taskId) => {
+      if (fail) throw new Error("store unavailable");
+      return record(taskId, 1_000);
+    });
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+    fail = true;
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    expect(workers.trackedTasks).toBe(0);
+  });
+
+  it("ignores a re-check answer once a newer commit was observed", async () => {
+    let calls = 0;
+    let answer!: (value: TaskRecord | undefined) => void;
+    const workers = new WorkerCoordinator(now, (taskId) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(record(taskId, 1_000));
+      return new Promise((resolve) => (answer = resolve));
+    });
+    const signal = workers.signalFor("t");
+    await vi.advanceTimersByTimeAsync(0);
+
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    workers.observe({ ...record("t", null), version: 2 });
+    answer(undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal.aborted).toBe(false);
+    expect(workers.trackedTasks).toBe(1);
+  });
+
+  it("stays bounded across 20,000 re-checked expiries", async () => {
+    const workers = new WorkerCoordinator(now, async () => undefined);
+    const signals = Array.from({ length: 20_000 }, (_, index) => {
+      const taskId = `t${index}`;
+      const signal = workers.signalFor(taskId);
+      workers.observe({ ...record(taskId, 1_000), version: 1 });
+      return signal;
+    });
+    current += 1_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(workers.trackedTasks).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does nothing once closed", async () => {

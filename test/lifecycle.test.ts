@@ -1657,6 +1657,55 @@ describe("the worker signal at TTL expiry", () => {
     await engine.close();
   });
 
+  it("follows a TTL another lifecycle revised, re-checking the store at the old expiry", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 1_000 });
+    const handle = engine.handle(taskId);
+    const signal = handle.signal;
+    const parked = handle.requestInput({ a: ROOTS });
+    const settled = vi.fn();
+    parked.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("extended", { ttlMs: 3_000 });
+    const update = vi.spyOn(store, "update");
+
+    await elapse(time, 1_000);
+    expect(signal.aborted).toBe(false);
+    expect(settled).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+
+    await elapse(time, 2_000);
+    expect(signal.reason).toBeInstanceOf(TaskNotFoundError);
+    await expect(parked).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(unhandled).toEqual([]);
+    await other.close();
+    await engine.close();
+  });
+
+  it("never aborts a signal whose TTL another lifecycle removed", async () => {
+    const { engine, store, time } = build();
+    const other = new TaskLifecycle({
+      store,
+      now: time.now,
+      sweepIntervalMs: null,
+    });
+    const { taskId } = await engine.createTask({ ttlMs: 50 });
+    const signal = engine.handle(taskId).signal;
+    await vi.advanceTimersByTimeAsync(0);
+    await other.handle(taskId).progress("forever", { ttlMs: null });
+
+    await elapse(time, 10 * 3_600_000);
+    expect(signal.aborted).toBe(false);
+    expect((await engine.getTask(taskId)).status).toBe("working");
+    await other.close();
+    await engine.close();
+  });
+
   it("rejects a worker parked in requestInput exactly once, and aborts its signal", async () => {
     const { engine, time } = build();
     const { taskId } = await engine.createTask({ ttlMs: 1_000 });
