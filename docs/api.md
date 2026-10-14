@@ -1,12 +1,6 @@
 # API
 
-The complete surface: three entry points, two stores, one engine, and the
-errors. The [README](../README.md) carries the shape of the thing; this carries
-the contract.
-
-The public API is **provisional until `1.0.0`**. Breaking changes before then
-are minor bumps with a changelog entry — see the
-[version contract](contract.md#version-contract).
+Every public signature and what it does. The API is **provisional until `1.0.0`**: a breaking change before then is a minor bump with a changelog entry ([version contract](contract.md#version-contract)).
 
 ```ts
 import {
@@ -24,8 +18,7 @@ import { runTaskStoreConformance } from "mcp-durable-tasks/testing";
 | `mcp-durable-tasks/wal`     | `WalTaskStore`                   | `process-wal` |
 | `mcp-durable-tasks/testing` | the store conformance kit        | nothing       |
 
-The main entry point imports no Node built-ins, so the engine and
-`MemoryTaskStore` run in Workers, Deno and Bun as well as Node.
+The main entry point imports no Node built-ins, so the engine and `MemoryTaskStore` also run in Workers, Deno and Bun.
 
 ---
 
@@ -45,25 +38,21 @@ const tasks = new TaskLifecycle({ store: new MemoryTaskStore() });
 | `defaultTtlMs`          | `number \| null` | `3_600_000`         | TTL for new tasks. `null` is unlimited. Must be `null` or a safe integer `> 0`.                                 |
 | `defaultPollIntervalMs` | `number \| null` | `1_000`             | The polling hint sent to clients. `null` omits it. Must be a safe integer.                                      |
 | `sweepIntervalMs`       | `number \| null` | `null`              | Automatic sweep period. `null` disables it. Must be an integer from 1 to 2,147,483,647. The timer is `unref`'d. |
-| `now`                   | `() => number`   | `Date.now`          | Injectable clock. For tests; nothing else should pass it.                                                       |
+| `now`                   | `() => number`   | `Date.now`          | Injectable clock, for tests only.                                                                               |
 | `generateTaskId`        | `() => string`   | `crypto.randomUUID` | Must stay unguessable — see [Security](https://github.com/AndresSaa/mcp-durable-tasks/blob/main/SECURITY.md).   |
+
+An invalid option throws `TypeError` from the constructor, before any timer starts. (Node would run an out-of-range timer delay as a 1 ms loop.)
 
 ### Methods
 
-| Method                               | Serves         | Contract                                                      |
-| ------------------------------------ | -------------- | ------------------------------------------------------------- |
-| `createTask(init?)`                  | `tools/call`   | Creates the task and resolves only once it is durable         |
-| `handle(taskId)`                     | —              | The write side, for the worker                                |
-| `getTask(taskId)`                    | `tasks/get`    | Pure read. Never mutates anything                             |
-| `updateTask(taskId, inputResponses)` | `tasks/update` | Applies outstanding input responses. Complete acknowledgement |
-| `cancelTask(taskId)`                 | `tasks/cancel` | Raises the worker's signal. Complete acknowledgement          |
-| `close()`                            | —              | Stops the sweeper, wakes parked workers, closes the store     |
-
-The constructor throws `TypeError`, before it starts any timer, for a
-`sweepIntervalMs` that is not `null`, `undefined` or an integer from 1 to
-2,147,483,647 (the longest delay a JavaScript timer honours). Node would
-silently run 0, a negative value, `NaN` or anything above that limit as a
-1 ms loop.
+| Method                               | Serves         | Returns            | Contract                                                  |
+| ------------------------------------ | -------------- | ------------------ | --------------------------------------------------------- |
+| `createTask(init?)`                  | `tools/call`   | `CreateTaskResult` | Creates the task; resolves only once it is durable        |
+| `handle(taskId)`                     | —              | `TaskHandle`       | The write side, for the worker                            |
+| `getTask(taskId)`                    | `tasks/get`    | `GetTaskResult`    | Pure read. Never mutates anything                         |
+| `updateTask(taskId, inputResponses)` | `tasks/update` | `UpdateTaskResult` | Applies outstanding input responses                       |
+| `cancelTask(taskId)`                 | `tasks/cancel` | `CancelTaskResult` | Raises the worker's signal                                |
+| `close()`                            | —              | `Promise<void>`    | Stops the sweeper, wakes parked workers, closes the store |
 
 #### `createTask(init?)`
 
@@ -75,37 +64,18 @@ const created = await tasks.createTask({
 });
 ```
 
-Returns a `CreateTaskResult`: the flat base task with `resultType: "task"`.
-**It does not resolve until the store says the
-record is durable**, which is what the extension requires normatively — a
-server MUST NOT return a `CreateTaskResult` before a `tasks/get` for that id
-would resolve.
+Returns the flat base task with `resultType: "task"`. **It does not resolve until the store says the record is durable** ([durability](durability.md#the-promise)).
 
-`ttlMs: 0` throws `TypeError`. Zero would acknowledge a task that expires the
-instant it is created, which is a task no client can ever read.
+Input rules, which also apply wherever the same field appears (`progress()`, `cancelled()`, the constructor defaults). A violation throws `TypeError` before anything is stored:
 
-Pass whole milliseconds. The stable schema types `ttlMs` and `pollIntervalMs`
-as integers within the safe-integer range, so a fraction, `NaN`, `Infinity`, a
-non-number or a value above `Number.MAX_SAFE_INTEGER` throws `TypeError` before
-anything is stored — here, in `progress()`, and for `defaultTtlMs` /
-`defaultPollIntervalMs` in the constructor. `ttlMs` must also be greater than
-0; `pollIntervalMs: 0` is accepted. A record written before this check, with a
-non-integer hint, still opens and is served as stored until the worker revises
-it ([contract](contract.md#wire-contract)).
+- `ttlMs` and `pollIntervalMs` are whole milliseconds in the safe-integer range, as the stable schema types them. No fractions, `NaN`, `Infinity` or non-numbers.
+- `ttlMs` is `null` or greater than 0; `ttlMs: 0` would create a task no client can read. `pollIntervalMs: 0` is fine.
+- `statusMessage` is a string, checked at runtime too for JavaScript callers.
+- A record written before these checks, with a non-integer hint, still opens and is served as stored until the worker revises it ([contract](contract.md#wire-contract)).
 
 #### `getTask(taskId)`
 
-Returns the `DetailedTask` variant for the current status. Throws
-`TaskNotFoundError` when the task does not exist **or its TTL has elapsed** —
-the two are deliberately indistinguishable.
-
-Every returned variant includes `resultType: "complete"`, as required for a
-completed protocol request. Internal store fields such as `version` are never
-projected onto this closed wire shape.
-
-This method writes nothing. Not `lastUpdatedAt`, not a cache, and it triggers
-no sweep. Reads and writes are separated in the extension so reads stay
-idempotent and cacheable.
+Returns the `DetailedTask` variant for the current status, with `resultType: "complete"` and no internal store fields. Throws `TaskNotFoundError` when the task does not exist **or its TTL has elapsed**; the two are deliberately indistinguishable. It writes nothing: not `lastUpdatedAt`, not a cache, and it triggers no sweep (I3).
 
 #### `updateTask(taskId, inputResponses)`
 
@@ -115,57 +85,31 @@ await tasks.updateTask(taskId, {
 });
 ```
 
-Applies responses whose keys are currently outstanding, and **ignores every
-other key** — never issued, already answered, or superseded. That is what the
-extension asks for, so a mixed update applies the good keys and drops the rest
-without complaining.
+Applies responses whose keys are outstanding and **ignores every other key** (never issued, already answered, or superseded), as the extension asks. Returns `{ resultType: "complete" }`.
 
-Three consequences worth knowing:
-
-- **Partial answers are legal.** The task stays `input_required` until every
-  outstanding key has an answer.
+- **Partial answers are legal.** The task stays `input_required` until every outstanding key has an answer.
 - **A repeated answer is a no-op**, not an overwrite.
-- **An update to a task that has already finished is an empty acknowledgement,
-  not an error.** No key is outstanding on a terminal task, so every key in
-  such an update is one the server should ignore. A client racing a late
-  response against a task that just completed is behaving correctly.
-
-Responses are validated against the request they answer. A response that does
-not match the shape of its `sampling/createMessage`, `roots/list` or
-`elicitation/create` request throws `TypeError` and nothing is committed.
-
-`TaskNotFoundError` still applies to an unknown id.
-
-The acknowledgement is `{ resultType: "complete" }`.
+- **An update to a finished task is an empty acknowledgement**, not an error: no key is outstanding any more.
+- A response that does not match the shape of its `sampling/createMessage`, `roots/list` or `elicitation/create` request throws `TypeError`, and nothing is committed.
+- An unknown id throws `TaskNotFoundError`.
 
 #### `cancelTask(taskId)`
 
-Raises the worker's `AbortSignal` with a `TaskCancelled` reason and **changes
-no status**. Cancellation is cooperative and eventually consistent: the task
-may stay `working` after the acknowledgement, and may end at a terminal status
-other than `cancelled` if the work finished first.
+Raises the worker's `AbortSignal` with a `TaskCancelled` reason and **changes no status**. Returns `{ resultType: "complete" }`, also for an already-terminal task, where it is a no-op.
 
-A worker that honours the signal calls `handle.cancelled()`. One that ignores
-it leaves the task to its TTL. Cancelling an already-terminal task is a no-op.
+Cancellation is cooperative and eventually consistent: the task may stay `working` for a while, or end at another terminal status if the work finished first. A worker that honours the signal calls `handle.cancelled()`; one that ignores it leaves the task to its TTL.
 
-The raised signal is process-local state. A worker in this process that reads
-`handle.signal` after the cancel still finds it raised, for as long as the
-task lives: the lifecycle keeps it until the task ends through this lifecycle,
-until its TTL elapses (by the lifecycle's clock, following any TTL revised
-through this lifecycle), or until `close()`. A task with `ttlMs: null` that
-never ends here keeps it until `close()`.
-The acknowledgement is `{ resultType: "complete" }` in both cases.
+The raised signal is process-local. A worker here that reads `handle.signal` later still finds it raised, until the task ends through this lifecycle, expires by its clock, or `close()` runs ([contract](contract.md#process-boundaries)).
 
 #### `close()`
 
-Idempotent. Rejects every parked `requestInput()` promise rather than leaving
-workers suspended, then closes the store.
+Idempotent. Rejects every parked `requestInput()` promise instead of leaving workers suspended, then closes the store.
 
 ---
 
 ## `TaskHandle`
 
-What a worker writes through. Obtained with `tasks.handle(taskId)`.
+What a worker writes through. Get one with `tasks.handle(taskId)`.
 
 ```ts
 async function work(task: TaskHandle) {
@@ -180,42 +124,28 @@ async function work(task: TaskHandle) {
 }
 ```
 
-| Member                            | Contract                                                             |
-| --------------------------------- | -------------------------------------------------------------------- |
-| `taskId`                          | The id this handle writes to                                         |
-| `signal`                          | `AbortSignal`, raised by `tasks/cancel` or TTL expiry³. Cooperative  |
-| `progress(statusMessage, patch?)` | Sets `statusMessage`, optionally revises `pollIntervalMs` / `ttlMs`² |
-| `requestInput(requests)`          | Parks in `input_required`; resolves when every key is answered       |
-| `resumeInput()`                   | Claims answers that arrived while no worker waited, exactly once     |
-| `complete(result)`                | Terminal. `result` must be a JSON object                             |
-| `fail(error)`                     | Terminal. Pass a JSON-RPC error: integer `code`, string `message`¹   |
-| `cancelled(statusMessage?)`       | Terminal. Acknowledges a cancellation the worker chose to honour     |
+| Member                            | Signature                                                     | Contract                                                                                  |
+| --------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `taskId`                          | `string`                                                      | The id this handle writes to                                                              |
+| `signal`                          | `AbortSignal`                                                 | Raised by `tasks/cancel` or TTL expiry. Cooperative: nothing is killed                    |
+| `progress(statusMessage, patch?)` | `patch?: { pollIntervalMs?: number; ttlMs?: number \| null }` | Sets `statusMessage`; optionally revises the hints. Invalid input: whole call not applied |
+| `requestInput(requests)`          | `→ Promise<InputResponses>`                                   | Parks in `input_required`; resolves when every key is answered                            |
+| `resumeInput()`                   | `→ Promise<InputResponses \| undefined>`                      | Claims answers that arrived while no worker waited, exactly once                          |
+| `complete(result)`                | `result: JsonObject`                                          | Terminal                                                                                  |
+| `fail(error)`                     | `error: TaskError`                                            | Terminal. A JSON-RPC error: integer `code`, string `message`                              |
+| `cancelled(statusMessage?)`       | `statusMessage?: string`                                      | Terminal. Acknowledges a cancellation the worker chose to honour                          |
 
-¹ The stable schema requires that shape for a failed task's `error`. The parameter is typed as the exported `TaskError`, `{ code: number; message: string; data?: JsonValue }`. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and nothing is written, which also covers untyped JavaScript. Other JSON members that reach it anyway are kept, because the schema is open. `TaskRecord.error` and `FailedTask.error` stay `JsonObject`: a log written before this check may hold a failed task with some other `error`, and it still opens and serves that error unchanged ([contract](contract.md#wire-contract)).
+Every write method returns `Promise<void>` unless shown otherwise.
 
-² Both hints follow the same rules as in `createTask()`: whole milliseconds in
-the safe-integer range, and `ttlMs` `null` or greater than 0. An invalid value
-throws `TypeError` and the whole call, message included, is not applied.
-`statusMessage` must be a string here, in `cancelled()` and in `createTask()`;
-TypeScript enforces that, and the engine checks it again at runtime for
-JavaScript callers, throwing `TypeError` without writing.
+**`signal.reason`** is a `TaskCancelled` after `tasks/cancel`, or a `TaskNotFoundError` once the TTL elapses by the lifecycle's clock (`ttlMs: null` never aborts). A signal raised by a cancellation keeps its first reason. Tell them apart with `signal.reason.name`. A worker that only reads `signal` and never writes is told too. Expiry abort is an engine policy that writes nothing ([contract](contract.md#process-boundaries)).
 
-³ Nothing is killed in either case. `signal.reason` is a `TaskCancelled` after `tasks/cancel`, and a `TaskNotFoundError` when the task's TTL elapses: the task is gone, and every later write and `tasks/get` say so with the same error. A signal already raised by a cancellation keeps its first reason. Expiry is measured by the lifecycle's clock from `createdAt` plus the current `ttlMs`, including a TTL revised with `progress()`; `ttlMs: null` never aborts. The first read of `signal` looks the record up once, so a worker that reads it and never writes is told too. This is an engine policy, not something the extension requires; nothing is written and the wire does not change ([contract](contract.md#process-boundaries)).
+**`fail(error)`** takes `TaskError`, `{ code: number; message: string; data?: JsonValue }`, as the stable schema requires. A missing or non-integer `code`, or a missing or non-string `message`, throws `TypeError` and writes nothing. Extra JSON members are kept (the schema is open). `TaskRecord.error` and `FailedTask.error` stay `JsonObject`, so an older log with some other `error` still opens and serves it unchanged ([contract](contract.md#wire-contract)).
 
-Result, error, request and response trees are detached and validated before a
-write. `-0` is accepted because it is a valid JSON number, then canonicalised
-to `0` before either store can observe it. Non-finite numbers and non-JSON
-objects are rejected without changing the task.
+**Payloads.** Result, error, request and response trees are copied and validated before a write. Non-finite numbers and non-JSON objects are rejected without changing the task. `-0` is accepted and stored as `0`.
 
-Any write to a task that is already `completed`, `failed` or `cancelled`
-throws `TaskAlreadyTerminalError`. That is the library's own bug class, not the
-caller's: it means a worker kept writing after it finished, or two code paths
-owned the same task. It throws rather than being ignored, because a silently
-swallowed double-complete is the defect this package exists to prevent.
+**Writes after the end** throw `TaskAlreadyTerminalError`: a worker kept writing after it finished, or two code paths own one task. A silently swallowed double-complete is the defect this package exists to prevent.
 
 ### `requestInput(requests)`
-
-The sharpest part of the surface.
 
 ```ts
 const answers = await task.requestInput({
@@ -226,75 +156,40 @@ const answers = await task.requestInput({
 });
 ```
 
-- **Requests are typed**, not a free-form channel: each must be a
-  `sampling/createMessage`, `roots/list` or `elicitation/create` request, with
-  the fields that request actually requires. Anything else throws `TypeError`
-  before the task moves.
-- **Validation was written from the SDK source at version 1.30.0** and is
-  checked against the stable `2026-07-28` definitions: integer `maxTokens`,
-  Base64 binary blocks, an object-rooted tool `inputSchema`, a string
-  `$schema` wherever a schema carries one, `file://` roots, and a URL-valid
-  `url` for URL elicitation. Following `2026-07-28`, URL elicitation does not
-  need an `elicitationId` (one that is present is kept), a tool `outputSchema`
-  may be any JSON Schema object, a tool result's `structuredContent` may be
-  any JSON value, and a tool's `execution`, which that revision does not
-  define, may be any JSON value and is kept unchanged. A sampling message, and the sampling result that answers it,
-  carry only text, image, audio, `tool_use` and `tool_result` blocks; resource
-  links and embedded resources are accepted only inside a `tool_result`'s
-  `content`. The remaining differences from the schema are listed in the
-  [contract](contract.md#input-rounds).
-- **Keys are unique for the whole lifetime of the task**, including after it is
-  terminal and across a restart. Reusing one throws `DuplicateInputKeyError`.
-- **The promise settles exactly once**: it resolves when every key is answered,
-  and rejects if the task is cancelled, finishes some other way, expires, or
-  the engine closes. It never leaks.
+- **Requests are typed.** Each must be a `sampling/createMessage`, `roots/list` or `elicitation/create` request with the fields that request requires. Anything else throws `TypeError` before the task moves.
+- **Validation follows the stable `2026-07-28` definitions**: integer `maxTokens`, Base64 binary blocks, an object-rooted tool `inputSchema`, a string `$schema` wherever a schema carries one, `file://` roots, a valid `url` for URL elicitation, and only text, image, audio, `tool_use` and `tool_result` blocks in sampling messages and results. The fields it accepts loosely (`elicitationId`, `outputSchema`, `structuredContent`, `execution`) and the remaining differences from the schema are in the [contract](contract.md#input-rounds).
+- **Keys are unique for the task's whole lifetime**, including after it ends and across a restart. Reusing one throws `DuplicateInputKeyError`.
+- **The promise settles exactly once.** It resolves when every key is answered, and rejects if the task is cancelled, finishes another way, expires, or the engine closes. It never leaks.
 
-**There is no way to observe the moment the task becomes parked**, and that is
-deliberate. A client learns which keys exist by polling `tasks/get`, so that is
-the only observable point that matters. In a test, poll `getTask` until the
-status is `input_required` rather than assuming the write has landed.
+There is deliberately no hook for the moment the task parks; clients learn the keys by polling `tasks/get`. In a test, poll `getTask` until the status is `input_required`.
 
 ### Worker process affinity
 
-The durable record lives in the `TaskStore`, but the promise `requestInput()`
-returns and the `AbortSignal` belong to **the process running the worker**.
-While a worker is live, `tasks/update` and `tasks/cancel` have to reach that
-instance. The extension specifies how: over Streamable HTTP, clients set the
-`Mcp-Name` header to the task ID on `tasks/get`, `tasks/update` and
-`tasks/cancel`, so your load balancer can route by it. That routing, or any
-other coordination between instances, is yours to configure.
-
-This is not an oversight; see
-[process boundaries](contract.md#process-boundaries). Embedding a
-broker would turn this state engine into the queue explicitly excluded by the
-[non-goals](contract.md#non-goals). After a crash there is no promise left to
-wake — there is durable state, which is the point.
+The record lives in the `TaskStore`, but the `requestInput()` promise and the `AbortSignal` belong to **the process running the worker**. While a worker is live, `tasks/update` and `tasks/cancel` must reach that instance. Over Streamable HTTP, clients set the `Mcp-Name` header to the task ID on `tasks/get`, `tasks/update` and `tasks/cancel`, so a load balancer can route by it. That routing, or any other coordination between instances, is yours to configure. A built-in broker would make this engine the queue the [non-goals](contract.md#non-goals) exclude ([process boundaries](contract.md#process-boundaries)).
 
 ### `resumeInput()`
 
-That durable state includes the answers to a round nobody was waiting for. If a task was `input_required` when its process died, a client reply that answers every outstanding key is acknowledged with `{ resultType: "complete" }`, moves the task to `working` as before, and is kept, off the wire, until a worker claims it. A restarted worker claims it with `resumeInput()`:
+Claims the answers to a round completed while no worker was waiting, typically after a restart ([durability](durability.md#what-durability-does-not-cover)):
 
 ```ts
 async function resume(task: TaskHandle) {
   const answers = await task.resumeInput();
   if (answers !== undefined) return continueWith(answers);
-  // Nothing arrived yet. A reply that comes later is kept the same way, so
-  // either call resumeInput() again later or ask again with new keys.
+  // Nothing arrived yet. A later reply is kept the same way, so either call
+  // resumeInput() again later or ask again with new keys.
 }
 ```
 
-- It resolves with the retained responses **exactly once**. The claim is a compare-and-swap write that removes them, so concurrent callers, or another instance on a shared store, cannot both receive them, and a crash after it resolves cannot hand them out again.
-- It resolves with `undefined`, and writes nothing, when there is nothing to claim: no round was completed without a worker, the answers were already claimed, or a live waiter received them directly.
-- Like every write, it throws `TaskNotFoundError` for a missing or expired task and `TaskAlreadyTerminalError` for a finished one. A terminal transition drops unclaimed answers.
-- **Call it before `requestInput()`.** Opening a new round drops unclaimed answers, because the worker has chosen not to use them. The claimed keys stay spent: re-issuing a key the dead process used still throws `DuplicateInputKeyError` (I5).
-
-A log written by `0.3.0` or earlier opens unchanged, and a round such a version completed with no worker stays lost. See [durability.md](durability.md#what-durability-does-not-cover) and the [contract](contract.md#input-rounds).
+- Resolves with the kept responses **exactly once**: the claim is a compare-and-swap write that removes them, even across instances on a shared store.
+- Resolves with `undefined`, writing nothing, when there is nothing to claim.
+- Throws like any write: `TaskNotFoundError` for a missing or expired task, `TaskAlreadyTerminalError` for a finished one.
+- **Call it before `requestInput()`.** A new round, or the end of the task, drops unclaimed answers. The old keys stay spent (I5).
 
 ---
 
 ## `TaskStore`
 
-Five methods. This is what you implement to put tasks somewhere else.
+Five methods. Implement this to put tasks somewhere else.
 
 ```ts
 interface TaskStore {
@@ -310,53 +205,31 @@ interface TaskStore {
 }
 ```
 
-| Method   | Must                                                                                    |
-| -------- | --------------------------------------------------------------------------------------- |
-| `create` | Not resolve until a later `get()` would find the record. This is the durability promise |
-| `get`    | Return `undefined` for an unknown id **and** for one whose TTL elapsed                  |
-| `update` | Reject with `ConcurrentUpdateError` when the stored version is not `expectedVersion`    |
-| `sweep`  | Return a count. **Never** the records — the extension has no enumeration, by design     |
-| `close`  | Be idempotent                                                                           |
+| Method   | Must                                                                                                            |
+| -------- | --------------------------------------------------------------------------------------------------------------- |
+| `create` | Not resolve until a later `get()` would find the record. This is the durability promise                         |
+| `get`    | Return `undefined` for an unknown id **and** for one whose TTL elapsed                                          |
+| `update` | Reject with `ConcurrentUpdateError` when the stored version is not `expectedVersion`; return the written record |
+| `sweep`  | Drop expired tasks and return how many. **Never** the records: the extension has no enumeration                 |
+| `close`  | Be idempotent                                                                                                   |
 
-Four rules that are easy to get wrong, and that the conformance kit checks:
+Rules that are easy to get wrong, all checked by the conformance kit:
 
-1. **`undefined` in a patch deletes the field.** It does not mean "leave
-   unchanged". A task leaving `input_required` clears its requests this way;
-   a leftover map would leave a `working` or terminal task carrying requests
-   its status does not allow, and `tasks/get` refuses to project such a record.
-   The rule covers **enumerable own string-keyed** properties.
+1. **`undefined` in a patch deletes the field**; it never means "leave unchanged". This covers enumerable own string-keyed properties. A task leaving `input_required` clears its requests this way, and `tasks/get` refuses to project a `working` or terminal record that still carries requests.
 2. **Every successful `update` bumps `version` by exactly one.**
-3. **Hand out copies, not references.** A caller who mutates a returned
-   `result` in place must not change stored state — that would be a write with
-   no version bump and nothing logged.
-4. **TTL is measured from `createdAt` plus the current `ttlMs`**, which may
-   change during the task's life. Raising it extends the same window rather
-   than restarting the clock; setting it to `null` makes the task unlimited
-   from then on.
-
-`TaskRecord` carries four fields that are **internal and must never reach the
-wire**: `version`, `inputResponses`, `unclaimedInputResponses` and `usedInputKeys`. The engine's
-projection is allow-list based so they cannot leak, but a store must persist
-them faithfully — `usedInputKeys` in particular has to survive both the
-terminal transition and a replay, or key uniqueness breaks after a restart.
-
-**Persist every field, including ones you do not recognise.** `unclaimedInputResponses` was added after `0.3.0`; it holds answers a client already gave while no worker was waiting. A store that writes, reads or replays only a fixed list of the fields it knew earlier drops them, and a restarted worker never sees those answers. The conformance kit checks the field through `update()`, `get()` and `reopen()`.
+3. **Hand out copies, not references.** Mutating a returned `result` must not change stored state.
+4. **TTL runs from `createdAt` plus the current `ttlMs`**, which may change. Raising it extends the same window; `null` makes the task unlimited from then on.
+5. **Persist every field, including ones you do not recognise.** That includes the four internal fields that never reach the wire: `version`, `inputResponses`, `unclaimedInputResponses` (added after `0.3.0`) and `usedInputKeys`. A store with a fixed field list loses answers a client already gave, and one that drops `usedInputKeys` at the terminal transition or on replay breaks key uniqueness after a restart.
 
 ---
 
 ## `MemoryTaskStore`
 
 ```ts
-new MemoryTaskStore({ now: () => Date.now() });
+new MemoryTaskStore({ now: () => Date.now() }); // options optional
 ```
 
-In-process. Tests, development, and servers whose tasks need not outlive the
-process. Uses no Node built-ins — this is the store that proves the engine runs
-on web-standard runtimes.
-
-It satisfies the durability promise vacuously: its boundary _is_ the process.
-That is the honest statement of what in-memory storage gives you, and it is why
-the crash tests run against `WalTaskStore`.
+In-process, with no Node built-ins: for tests, development, and servers whose tasks need not outlive the process. Its durability boundary _is_ the process.
 
 ---
 
@@ -368,38 +241,24 @@ import { WalTaskStore, DEFAULT_MAX_ENTRY_BYTES } from "mcp-durable-tasks/wal";
 const store = new WalTaskStore({ dir: "./data" });
 ```
 
-Durable across process restarts, on top of
-[`process-wal`](https://github.com/AndresSaa/process-wal). An in-memory index
-serves reads; every mutation is appended to a write-ahead log first, and the
-log replays into the index on open.
+Durable across process restarts, on top of [`process-wal`](https://github.com/AndresSaa/process-wal). Reads come from an in-memory index; every mutation is first appended to a write-ahead log, which replays on open.
 
-| Option              | Type              | Default    | Meaning                                                                                          |
-| ------------------- | ----------------- | ---------- | ------------------------------------------------------------------------------------------------ |
-| `dir`               | `string`          | —          | Required. Holds `wal.jsonl` and `wal.checkpoint`                                                 |
-| `fsync`             | `boolean`         | `false`    | `true` moves the boundary from the page cache to storage                                         |
-| `maxEntryBytes`     | `number`          | 8 MiB      | Largest encoded task record the log accepts                                                      |
-| `compactEvery`      | `number \| null`  | `1_000`    | Superseded entries before an automatic rewrite. `null` disables; otherwise a safe integer `>= 1` |
-| `now`               | `() => number`    | `Date.now` | Injectable clock, for TTL                                                                        |
-| `onCompactionError` | `(event) => void` | —          | Observes a failed automatic compaction                                                           |
+| Option              | Type                                       | Default    | Meaning                                                                                          |
+| ------------------- | ------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
+| `dir`               | `string`                                   | —          | Required. Holds `wal.jsonl` and `wal.checkpoint`                                                 |
+| `fsync`             | `boolean`                                  | `false`    | `true` moves the boundary from the page cache to storage                                         |
+| `maxEntryBytes`     | `number`                                   | 8 MiB      | Largest encoded task record the log accepts (`DEFAULT_MAX_ENTRY_BYTES`)                          |
+| `compactEvery`      | `number \| null`                           | `1_000`    | Superseded entries before an automatic rewrite. `null` disables; otherwise a safe integer `>= 1` |
+| `now`               | `() => number`                             | `Date.now` | Injectable clock, for TTL                                                                        |
+| `onCompactionError` | `(event: WalCompactionErrorEvent) => void` | —          | Observes a failed automatic compaction                                                           |
 
-A `compactEvery` that is not `null`, `undefined` or a safe integer of at least
-1 throws `TypeError` before the log is opened. `NaN` used to disable
-compaction silently, and 0 or a negative count compacted after every mutation.
+Any other `compactEvery` (`NaN`, 0, a negative number) throws `TypeError` before the log opens.
 
-**One process, one directory.** `process-wal` is single-writer and does not
-lock; two processes on the same directory corrupt the log. See
-[durability.md](durability.md).
+**One process, one directory.** `process-wal` is single-writer and does not lock; two processes on one directory corrupt the log ([durability](durability.md#two-unsupported-configurations)).
 
-### `compact()`
+### `compact(): void`
 
-Rewrites the log as a snapshot of live tasks and drops everything before it.
-Called automatically according to `compactEvery`; public because it is policy,
-not housekeeping — a long-lived process may want to control when it happens.
-
-An automatic compaction that fails **does not fail the mutation that triggered
-it**: that write was already durable before compaction began, and reporting it
-as failed would be a lie. The failure is reported through `onCompactionError`
-and, if it left the underlying log unusable, surfaced on the next operation.
+Rewrites the log as a snapshot of live tasks and drops everything before it. Runs automatically per `compactEvery`; call it yourself to choose when ([durability](durability.md#compaction)).
 
 ---
 
@@ -414,10 +273,7 @@ and, if it left the underlying log unusable, surfaced on the next operation.
 | `TaskEntryTooLargeError`   | A record exceeded `maxEntryBytes`. Nothing was committed     | Complete again with a smaller result |
 | `TaskCancelled`            | The reason on an aborted `signal`, not thrown by the library | Stop the work                        |
 
-`TaskNotFoundError` is also the reason on a `signal` aborted because the task's TTL elapsed. Tell the two apart with `signal.reason.name`.
-
-`TaskEntryTooLargeError` carries a stable `code` of `ERR_ENTRY_TOO_LARGE`, so a
-worker can recover rather than lose the work it just finished:
+`TaskEntryTooLargeError` has the stable `code` `ERR_ENTRY_TOO_LARGE`, so a worker can recover instead of losing finished work:
 
 ```ts
 import { isTaskEntryTooLargeError } from "mcp-durable-tasks";
@@ -430,21 +286,15 @@ try {
 }
 ```
 
-`isTaskEntryTooLargeError()` checks the stable code, and
-`isConcurrentUpdateError()` checks the stable CAS name. Use these predicates
-at package boundaries: duplicated installations and separate CJS bundles do
-not guarantee that an error shares the consumer's class identity.
+Prefer `isTaskEntryTooLargeError()` (stable code) and `isConcurrentUpdateError()` (stable name) to `instanceof`: duplicated installations and separate CJS bundles do not share class identity.
 
-There is deliberately **no error for an unrecognised input key**: the
-extension says a server SHOULD ignore responses whose key is not outstanding,
-so throwing would be a conformance bug.
+There is deliberately **no error for an unrecognised input key**: the extension says a server SHOULD ignore it, so throwing would be a conformance bug.
 
 ---
 
 ## `mcp-durable-tasks/testing`
 
-The conformance kit. See [README](../README.md#writing-your-own-store) for the
-short version.
+The conformance kit. Short version in the [README](../README.md#writing-your-own-store).
 
 | Export                                             | Purpose                                        |
 | -------------------------------------------------- | ---------------------------------------------- |
@@ -453,17 +303,13 @@ short version.
 | `conformanceChecks`                                | The check list, if you want to filter it       |
 | `conformanceRecord(overrides?)`                    | Builds a valid `TaskRecord` for your own tests |
 
-The factory is called **once per check** and must return a fresh, isolated
-store each time. Sharing one leaks state between checks, and a suite whose
-result depends on ordering is worse than none — so the kit detects a reused
-instance and fails.
-
 ```ts
 runTaskStoreConformance(
   "RedisTaskStore",
   () => ({
     store: new RedisTaskStore({ url }),
     advanceTime: (ms) => clock.advance(ms), // optional
+    now: () => clock.now(), // optional, with advanceTime
     reopen: () => new RedisTaskStore({ url }), // optional
     dispose: () => cleanup(), // optional
   }),
@@ -471,20 +317,10 @@ runTaskStoreConformance(
 );
 ```
 
-The checks cover the patch rules explicitly: `undefined` deletes a field,
-`null` is a value (`ttlMs: null` must come back as `null`), and `error`,
-`lastUpdatedAt` and every other patchable field must persist and round-trip.
-
-`advanceTime`, `now` and `reopen` are optional seams. Without them the checks that
-need them are **skipped, not passed** — a store that cannot fake time or
-reconnect gets an honest report rather than credit for checks that never ran.
-
-`now` goes with `advanceTime`: it returns where the store's clock is, in epoch
-milliseconds, and the TTL checks stamp the tasks they create from it, so the
-clock may start at `Date.now()` or anywhere else. Omit it and the kit assumes
-the clock starts at `2026-01-01T00:00:00.000Z`; a store whose clock starts
-elsewhere then fails the TTL checks, and the failure message says to declare
-`now`.
+- The factory is called **once per check** and must return a fresh, isolated store. The kit fails if it sees a reused instance.
+- The checks cover the patch rules: `undefined` deletes a field, `null` is a value (`ttlMs: null` comes back as `null`), and `error`, `lastUpdatedAt` and every other patchable field round-trip.
+- `advanceTime`, `now` and `reopen` are optional. Checks that need a missing one are **skipped, not passed**.
+- `now` returns the store's clock in epoch milliseconds, and the TTL checks stamp their tasks from it. Without it the kit assumes the clock starts at `2026-01-01T00:00:00.000Z`; if yours does not, the TTL checks fail and say to declare `now`.
 
 ---
 

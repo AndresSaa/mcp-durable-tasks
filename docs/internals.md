@@ -1,7 +1,6 @@
 # Internals
 
-Design decisions, the source layout, and the things that look like
-over-engineering until you know what went wrong without them.
+How the engine is put together, and why some parts look heavier than they need to be. The package fills the extension's Task Store role, which the TypeScript SDK stopped implementing when Tasks became an extension in the `2026-07-28` revision.
 
 ## The one shape that matters
 
@@ -14,175 +13,64 @@ tasks/cancel        ▼
               (promises, signals)
 ```
 
-Two halves that do not mix. **Everything to the right of `TaskStore` is
-durable**; everything in `WorkerCoordinator` is process-local by nature and
-cannot be otherwise. A promise and an `AbortSignal` do not survive a crash, and
-pretending they might would be the sort of lie this package exists to avoid.
+Two halves that do not mix. **Everything right of `TaskStore` is durable.** Everything in `WorkerCoordinator` is process-local and cannot be otherwise: a promise and an `AbortSignal` do not survive a crash.
 
 ## Design decisions
 
-**The store record and the wire shape are two types.** A `TaskRecord` carries
-four fields that are not part of any task the extension defines: `version`
-for compare-and-swap, `inputResponses` for a round in progress,
-`unclaimedInputResponses` for a completed round no worker was waiting for, and
-`usedInputKeys` for the lifetime key ledger. The pre-stable draft schema
-rejected them outright with `additionalProperties: false`; the stable
-`2026-07-28` schema is open and would accept them, so keeping them off the
-wire is this package's guarantee rather than one the schema checks. `wire.ts` projects one onto the other with an
-**allow-list**, not a copy-and-delete — the difference is that a new internal
-field is invisible to the wire until someone deliberately lists it, instead of
-leaking until someone remembers to exclude it.
+**The store record and the wire shape are two types.** `TaskRecord` has four fields no extension task defines: `version` (compare-and-swap), `inputResponses` (a round in progress), `unclaimedInputResponses` (a completed round no worker was waiting for) and `usedInputKeys` (the lifetime key ledger). The stable `2026-07-28` schema is open and would accept them, so keeping them off the wire is this package's guarantee. `wire.ts` projects with an **allow-list**, not copy-and-delete, so a new internal field stays invisible until someone deliberately lists it.
 
-**Compare-and-swap rather than locks.** The 2026 revision is stateless and
-several server instances may write the same record. Optimistic concurrency is
-the only thing that works without a lock manager, and `WalTaskStore` — which is
-single-writer and can never lose a race — implements it anyway so there is one
-contract rather than two.
+**Compare-and-swap, not locks.** The 2026 revision is stateless, and several server instances may write the same record; optimistic concurrency works without a lock manager. `WalTaskStore` is single-writer and never loses a race, but implements CAS anyway so there is one contract.
 
-**`undefined` in a patch deletes.** It does not mean "leave unchanged". A task
-leaving `input_required` clears its requests that way. A spread that left the
-key present holding `undefined` would keep a non-JSON record, which memory and
-a WAL replay would then represent differently, and a store that ignored the
-`undefined` would keep the stale requests on a task that no longer awaits
-them. This is the rule a third-party store gets wrong first, so the
-conformance kit checks it explicitly.
+**`undefined` in a patch deletes.** A task leaving `input_required` clears its requests this way. Leaving the key present with `undefined` would make a non-JSON record that memory and a WAL replay represent differently; ignoring it would leave stale requests on a task that no longer waits. Third-party stores get this wrong first, so the conformance kit checks it.
 
-**Stores hand out deep copies.** A caller who mutated a returned `result` in
-place would change stored state behind the compare-and-swap — no version bump,
-nothing logged, and nothing to find later. `record.ts` freezes a
-`structuredClone` on the way out of both stores.
+**Stores hand out deep copies.** Otherwise a caller mutating a returned `result` would change stored state behind the compare-and-swap, with no version bump and nothing logged. `record.ts` freezes a `structuredClone` on the way out of both stores.
 
-**Payloads are validated as JSON before anything is committed.** `json.ts`
-rejects a `Map`, a `Date`, a cycle — anything `structuredClone` would keep but
-`JSON.stringify` would flatten. Without it, `MemoryTaskStore` and
-`WalTaskStore` disagree about what a task holds: the in-memory one returns the
-`Map`, and the WAL returns `{}` after a restart. Accepting a value in memory
-that the log corrupts is worse than rejecting it at the call.
+**Payloads are validated as JSON before commit.** `json.ts` rejects a `Map`, a `Date`, a cycle: anything `structuredClone` keeps but `JSON.stringify` flattens. Without it the two stores disagree (memory returns the `Map`, the WAL returns `{}` after a restart).
 
-**Cancellation changes no status.** `tasks/cancel` raises the signal and stops.
-The specification is explicit that cancellation is eventually consistent and a
-task may end somewhere other than `cancelled`, so only the worker knows when it
-has actually stopped — which is why `TaskHandle.cancelled()` exists. Without
-it, `cancelled` would be unreachable.
+**Cancellation changes no status.** `tasks/cancel` only raises the signal. The spec says cancellation is eventually consistent and a task may end elsewhere, so only the worker knows when it has stopped. That is why `TaskHandle.cancelled()` exists; without it, `cancelled` would be unreachable.
 
-**TTL is measured from `createdAt`.** Not from when `ttlMs` last changed.
-Raising it extends the same window; setting it to `null` makes the task
-unlimited from that moment, retroactively included.
+**TTL is measured from `createdAt`**, not from when `ttlMs` last changed. Raising it extends the same window; `null` makes the task unlimited from then on.
 
 ## Source layout
 
-| File                    | Job                                                             |
-| ----------------------- | --------------------------------------------------------------- |
-| `types.ts`              | The public contract, and nothing else                           |
-| `index.ts`              | The main entry point's re-exports                               |
-| `lifecycle.ts`          | The protocol-facing state machine                               |
-| `task-mutator.ts`       | Read, decide, compare-and-swap, retry — the single write path   |
-| `worker-coordinator.ts` | Process-local promises and abort signals                        |
-| `handle.ts`             | The worker's write side                                         |
-| `wire.ts`               | `TaskRecord` → `DetailedTask`, allow-list based                 |
-| `input.ts`              | Runtime validation of the three MCP input request/result shapes |
-| `input-round.ts`        | The `tasks/update` merge rule, as a pure function               |
-| `json.ts`               | JSON-value validation                                           |
-| `record.ts`             | Rules both stores share: expiry, patch merge, snapshot          |
-| `memory-store.ts`       | The dependency-free store                                       |
-| `wal.ts`                | The durable store, `mcp-durable-tasks/wal`                      |
-| `conformance.ts`        | The checks a `TaskStore` must pass                              |
-| `testing.ts`            | `mcp-durable-tasks/testing` — the kit's public surface          |
-| `validation.ts`         | Small shared argument guards                                    |
+| File                    | Job                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `types.ts`              | The public contract, and nothing else                                        |
+| `index.ts`              | The main entry point's re-exports                                            |
+| `lifecycle.ts`          | The protocol-facing state machine                                            |
+| `task-mutator.ts`       | Read, decide, compare-and-swap, retry — the single write path                |
+| `worker-coordinator.ts` | Process-local promises and abort signals                                     |
+| `handle.ts`             | The worker's write side                                                      |
+| `wire.ts`               | `TaskRecord` → `DetailedTask`, allow-list based                              |
+| `input.ts`              | Runtime validation of the three MCP input request/result shapes              |
+| `input-round.ts`        | The `tasks/update` merge rule, as a pure function                            |
+| `json.ts`               | JSON-value validation                                                        |
+| `record.ts`             | Rules both stores share: expiry, patch merge, snapshot                       |
+| `memory-store.ts`       | The dependency-free store                                                    |
+| `wal.ts`                | The durable store, `mcp-durable-tasks/wal`                                   |
+| `conformance.ts`        | The checks a `TaskStore` must pass                                           |
+| `testing.ts`            | `mcp-durable-tasks/testing` — the kit's public surface                       |
+| `validation.ts`         | Small shared argument guards                                                 |
+| `errors.ts`             | Every error class, including `TaskCancelled` (a signal reason, never thrown) |
 
-Two files are larger than the others for reasons rather than by accident.
-`types.ts` is the whole public contract in one place, so a consumer can read
-what they get without opening anything else. `conformance.ts` is a list of
-independent checks; splitting it would scatter one product across files.
-
-`lifecycle.ts` is the one to watch. It orchestrates, so its size tracks the
-number of methods it serves rather than accumulated responsibility — but that
-is an argument, not a licence. Three things have come out of it so far: the
-generic persistence loop into `task-mutator.ts`, the process-local coordination
-into `worker-coordinator.ts`, and the `tasks/update` merge rule into
-`input-round.ts`. Anything else that can leave without dragging the lifecycle's
-state with it should.
-
-The merge rule is the clearest case of why. It is the sharpest algorithm here
-and the one every audit has found something in — prototype-named keys, partial
-rounds, duplicate delivery, a decision surviving a lost compare-and-swap. As a
-function of three values it is testable directly, and a table of its cases
-reads as the rule it enforces. Inside the lifecycle it needed a store, an
-engine and a clock to exercise at all.
-
-Every error class lives in `errors.ts`, including `TaskCancelled` — which is
-not thrown by the library but carried as an aborted signal's reason. A
-consumer looking for the error catalogue should find all of it in one file.
+- `types.ts` is large on purpose: the whole public contract in one file.
+- `conformance.ts` is a list of independent checks; splitting it would scatter one product.
+- `lifecycle.ts` orchestrates, so it grows with the methods it serves. Anything that can leave without dragging lifecycle state along should, as the persistence loop (`task-mutator.ts`), process-local coordination (`worker-coordinator.ts`) and the merge rule (`input-round.ts`) already did.
+- The merge rule is the sharpest algorithm here and has had a finding in every audit (prototype-named keys, partial rounds, duplicate delivery, a decision surviving a lost CAS). As a pure function of three values, its cases test directly as a table.
 
 ## Why `input.ts` is not a schema validator
 
-It was written when the extension's pre-stable draft `schema.json` lost the
-part that matters here: `InputRequest` and `InputResponse` degraded to an
-unconstrained `anyOf`, so a validator built on that JSON Schema accepted
-anything as an input request. The runtime therefore enforces the shapes
-structurally and without a dependency, mirroring the SDK 1.30.0 types.
-
-Upstream fixed the schema
-([conformance question A8](contract.md#extension-conformance-questions)): the
-stable `2026-07-28` snapshot defines both unions concretely. Using a JSON Schema
-validator at runtime would still cost the main entry point a dependency, so
-`input.ts` stays structural; the test suite checks it against the snapshot with
-a validator instead. That check found three shapes the snapshot accepts and
-`input.ts` refused; those three rules now follow the `2026-07-28` base types,
-and the differences that remain are listed in
-[input rounds](contract.md#input-rounds).
+A JSON Schema validator would add a dependency to the main entry point, so `input.ts` checks the shapes structurally. The test suite checks it against the stable `2026-07-28` schema snapshot with a real validator. Rules where the snapshot was more permissive now follow its base types; the remaining differences are listed in [input rounds](contract.md#input-rounds) (see also [A8](contract.md#extension-conformance-questions)).
 
 ## Why the compatibility seam stays in the host
 
-On a 2026-07-28 server built with `@modelcontextprotocol/server` before 2.3.0,
-`tasks/get` and `tasks/cancel` cannot be served through registered SDK handlers:
-both names belong to the retired 2025-11-25 method registry, and the
-protocol-era gate answers `-32601` before any handler runs — including
-`fallbackRequestHandler`.
-`tasks/update` works, because SEP-2663 introduced it and no era claims the name.
-
-Both known workarounds sit below the SDK's method dispatch. Renaming the two
-methods at the `transport.onmessage` seam was measured here and works. The MCP
-Inspector takes the other route: it answers modern `tasks/*` POSTs in HTTP
-middleware before `createMcpHandler` sees them, and sends them client-side as
-raw `transport.send()` frames — which sidesteps the era gate rather than
-working around it.
-
-An earlier revision of this file called the rename "the only verified escape".
-That was written from the assumption that the Inspector did the same thing, and
-the assumption was never checked; it does not. The measurement and the exact
-dispatcher code are summarised in the
-[SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility). The
-package does not ship either seam: the verified HTTP route belongs to the host.
-Since `@modelcontextprotocol/server` 2.3.0 the need is removed upstream for
-handlers registered with an explicit schema (A6). Measured here on 2.3.1, that
-registration serves all three methods, and the crash-recovery example uses it
-with no workaround. The package has no client entry point either: the requester
-side belongs to the official `@modelcontextprotocol/ext-tasks/client`.
+On a `2026-07-28` server built with `@modelcontextprotocol/server` before 2.3.0, the SDK answers `tasks/get` and `tasks/cancel` with `-32601` before any handler runs. Since 2.3.0, handlers registered with an explicit schema serve all three methods (A6), and the crash-recovery example uses that with no workaround. A host on an older SDK keeps its own narrow workaround; the package ships neither a seam nor a client entry point (the requester side belongs to `@modelcontextprotocol/ext-tasks/client`). The measurements and both known workarounds are in the [SDK compatibility profile](contract.md#typescript-sdk-v2-compatibility).
 
 ## Cost profile
 
-Reads are a map lookup plus a `structuredClone`, and never touch the
-filesystem. Writes are one synchronous append; `WalTaskStore` inherits
-`process-wal`'s cost, which is dominated by whether `fsync` is on.
+Reads are a map lookup plus a `structuredClone`, and never touch the filesystem. Writes are one synchronous append; `WalTaskStore` inherits `process-wal`'s cost, which depends mostly on `fsync`.
 
-Log growth is bounded by compaction rather than by task count: every mutation
-appends a whole record, so a task updated a thousand times leaves 999
-superseded entries until a rewrite reclaims them. There is no benchmark in this
-repository yet — `process-wal` already measures the layer underneath, and a
-number here would only be worth publishing to back a claim about the engine's
-own overhead.
-
-## Origin
-
-The MCP Tasks extension defines four roles: Client, Server, Task Store and
-Worker. When the 2026-07-28 revision made Tasks an extension, the TypeScript
-SDK removed task support from both sides — so the Task Store role had no
-implementation, and anyone serving Tasks from TypeScript was writing the state
-machine, the TTL, the polling hints and the `inputRequests` round-trip by hand.
-
-Small, tedious, easy to get subtly wrong, and ownerless. That is still the
-shape of the problem this solves.
+Log size is bounded by compaction, not task count: a task updated a thousand times leaves 999 superseded entries until a rewrite reclaims them. There is no benchmark here yet; `process-wal` measures the layer underneath, and one belongs here only to back a claim about the engine's own overhead.
 
 ## See also
 
