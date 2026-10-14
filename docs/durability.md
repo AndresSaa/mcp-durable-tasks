@@ -88,7 +88,7 @@ A failed automatic compaction never fails the mutation that triggered it: that w
 Still lost:
 
 - a round that `0.3.0` or earlier completed with no worker, since that log holds no answers;
-- the narrow race where the waiter a reply was meant for is rejected (cancellation, expiry or `close()`) between the decision to deliver and the commit ([contract](contract.md#input-rounds)).
+- answers whose waiter was rejected just after the reply committed, if the process dies or the lifecycle closes before the follow-up write that keeps them ([contract](contract.md#input-rounds)).
 
 `test/crash.test.ts` kills the process after the reply and again after the claim; `test/wal-store.test.ts` covers replay and a `0.3.0` log.
 

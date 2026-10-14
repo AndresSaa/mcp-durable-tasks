@@ -1171,6 +1171,75 @@ describe("input responses that arrive with no worker", () => {
     );
     await engine.close();
   });
+
+  it("keeps a reply whose waiter was cancelled after the reply committed", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    const settled = answers.then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+    await untilParked(engine, taskId);
+
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    expect((await store.inner.get(taskId))?.status).toBe("working");
+    await engine.cancelTask(taskId);
+    release();
+    await update;
+
+    expect(await settled).toBeInstanceOf(TaskCancelled);
+    await expect(handle.resumeInput()).resolves.toEqual({ a: { roots: [] } });
+    await engine.close();
+  });
+
+  /** A parked worker whose reply has committed but not yet returned. */
+  async function replyInFlight() {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const handle = engine.handle(taskId);
+    const answers = handle.requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    const release = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    await engine.cancelTask(taskId);
+    return { store, engine, taskId, handle, release, update };
+  }
+
+  it("does not keep a cancelled waiter's reply over a newer round", async () => {
+    const { store, engine, taskId, release, update } = await replyInFlight();
+    const other = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const next = other.handle(taskId).requestInput({ c: ROOTS });
+    void next.catch(() => undefined);
+    await untilParked(other, taskId);
+    release();
+    await expect(update).resolves.toEqual({ resultType: "complete" });
+
+    const record = await store.get(taskId);
+    expect(record).toMatchObject({ status: "input_required" });
+    expect(record).not.toHaveProperty("unclaimedInputResponses");
+    await other.close();
+    await engine.close();
+  });
+
+  it("does not keep a cancelled waiter's reply once the task has ended", async () => {
+    const { store, engine, taskId, handle, release, update } =
+      await replyInFlight();
+    await handle.cancelled();
+    release();
+    await expect(update).resolves.toEqual({ resultType: "complete" });
+    expect(await store.get(taskId)).not.toHaveProperty(
+      "unclaimedInputResponses",
+    );
+    await engine.close();
+  });
 });
 
 describe("argument checking", () => {

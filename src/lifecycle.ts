@@ -203,7 +203,7 @@ export class TaskLifecycle {
     }
 
     if (round?.kept === false) {
-      this.#workers.resolve(taskId, round.responses);
+      await this.#deliver(taskId, round.responses);
     } else if (round?.kept === true) {
       // The waiter for this round may have committed it before this process
       // saw the commit. It gets the answers once it is armed.
@@ -259,6 +259,35 @@ export class TaskLifecycle {
   }
 
   /**
+   * Hands committed answers to their waiter. If it was rejected after the
+   * commit (cancelled, expired), they are kept for `resumeInput()` instead,
+   * unless the task has moved on. A process that dies between the commit and
+   * this write still loses them.
+   */
+  async #deliver(taskId: string, responses: InputResponses): Promise<void> {
+    if (this.#workers.resolve(taskId, responses) || this.#closed) return;
+    const keys = Object.keys(responses);
+    try {
+      await this.#mutate(taskId, (record) => {
+        if (record.status !== "working") return undefined;
+        if (record.unclaimedInputResponses !== undefined) return undefined;
+        // Every round adds new keys at the end of the ledger, so if these are
+        // still the last ones issued, no newer round has opened.
+        const latest = (record.usedInputKeys ?? []).slice(-keys.length);
+        if (!keys.every((key) => latest.includes(key))) return undefined;
+        return { unclaimedInputResponses: responses };
+      });
+    } catch (error) {
+      if (
+        !(error instanceof TaskAlreadyTerminalError) &&
+        !(error instanceof TaskNotFoundError)
+      ) {
+        throw error;
+      }
+    }
+  }
+
+  /**
    * Claims kept answers for a waiter whose round they complete: a reply that
    * committed before this process saw the waiter's own round commit.
    */
@@ -277,7 +306,7 @@ export class TaskLifecycle {
         };
       });
       if (outcome.changed) {
-        this.#workers.resolve(taskId, outcome.afterCommit);
+        await this.#deliver(taskId, outcome.afterCommit);
       } else {
         // Someone else claimed them with resumeInput(). The round is over, so
         // nothing else would ever settle this waiter.
