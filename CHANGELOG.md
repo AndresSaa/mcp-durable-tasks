@@ -16,7 +16,7 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 - A `tasks/update` that completes an older input round no longer resolves a newer round's `requestInput()` with the older answers.
 - A reply that completes a round while a restarted worker re-asks with the same, already used keys is no longer lost: `requestInput()` throws `DuplicateInputKeyError` as before, and `resumeInput()` returns the answers.
-- A reply whose waiting worker is cancelled just after the reply is written is no longer lost: the answers are kept for `resumeInput()`, unless the task has ended or a new round has opened.
+- A reply whose waiting worker is cancelled just after the reply is written is no longer lost: the answers are kept for `resumeInput()`, unless the task has ended or a new round has opened. If the store fails that write, the answers are lost and its error is thrown from `updateTask()`, or from `requestInput()` if that call was claiming them.
 - A worker's signal is no longer aborted with `TaskNotFoundError` while its task is alive because another `TaskLifecycle` on the same store extended or removed the TTL. The lifecycle now reads the task once before aborting.
 - **Breaking:** `fail()` now requires a JSON-RPC error object: an integer `code`, a string `message` and optional `data`. Anything else throws `TypeError` and nothing is written; before, any object was stored and every `tasks/get` for the task then failed schema validation. An already stored non-conforming error is served as is until the task expires.
 - **Breaking (types):** `TaskHandle.fail()` now takes the new `TaskError` type, `{ code: number; message: string; data?: JsonValue }`, so the compiler refuses what the runtime refuses.

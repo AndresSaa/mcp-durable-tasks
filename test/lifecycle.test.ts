@@ -1328,7 +1328,9 @@ describe("claims racing other writes", () => {
     await engine.close();
   });
 
-  it("reports a store failure while keeping a cancelled waiter's answers", async () => {
+  // A store that fails the write keeping a cancelled waiter's answers loses
+  // them. Nothing can retry that write, so the caller is told instead.
+  it("reports a store failure that loses a cancelled waiter's answers", async () => {
     const store = new GatedStore();
     const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
     const { taskId } = await engine.createTask();
@@ -1344,6 +1346,66 @@ describe("claims racing other writes", () => {
     store.failNextUpdate(failure);
     release();
     await expect(update).rejects.toBe(failure);
+    await expect(answers).rejects.toBeInstanceOf(TaskCancelled);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(await store.get(taskId)).toMatchObject({ status: "working" });
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects requestInput() with the store failure that loses claimed answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const releaseRound = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+    // The reply lands before this process sees the round commit: kept.
+    await engine.updateTask(taskId, { a: rootsResponse() });
+
+    // The waiter claims them; the task is cancelled before they reach it.
+    const releaseClaim = store.holdNextUpdate();
+    releaseRound();
+    await settle();
+    await engine.cancelTask(taskId);
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    releaseClaim();
+
+    await expect(answers).rejects.toBe(failure);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
+    expect(unhandled).toEqual([]);
+    await engine.close();
+  });
+
+  it("rejects updateTask() with the store failure that loses claimed answers", async () => {
+    const store = new GatedStore();
+    const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
+    const { taskId } = await engine.createTask();
+    const releaseRound = store.holdNextUpdate();
+    const answers = engine.handle(taskId).requestInput({ a: ROOTS });
+    void answers.catch(() => undefined);
+    await untilParked(engine, taskId);
+
+    // The reply is decided before the round's commit is seen, and returns
+    // after it, so the reply itself claims the kept answers for the waiter.
+    const releaseReply = store.holdNextUpdate();
+    const update = engine.updateTask(taskId, { a: rootsResponse() });
+    await settle();
+    releaseRound();
+    await settle();
+    const releaseClaim = store.holdNextUpdate();
+    releaseReply();
+    await settle();
+    await engine.cancelTask(taskId);
+    const failure = new Error("disk full");
+    store.failNextUpdate(failure);
+    releaseClaim();
+
+    await expect(update).rejects.toBe(failure);
+    await expect(answers).rejects.toBeInstanceOf(TaskCancelled);
+    await expect(engine.handle(taskId).resumeInput()).resolves.toBeUndefined();
     expect(unhandled).toEqual([]);
     await engine.close();
   });

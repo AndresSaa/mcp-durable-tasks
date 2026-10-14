@@ -261,8 +261,8 @@ export class TaskLifecycle {
   /**
    * Hands committed answers to their waiter. If it was rejected after the
    * commit (cancelled, expired), they are kept for `resumeInput()` instead,
-   * unless the task has moved on. A process that dies between the commit and
-   * this write still loses them.
+   * unless the task has moved on. They are lost if the process dies before
+   * that write, or if the write fails; the store's error is then thrown.
    */
   async #deliver(taskId: string, responses: InputResponses): Promise<void> {
     if (this.#workers.resolve(taskId, responses) || this.#closed) return;
@@ -290,11 +290,15 @@ export class TaskLifecycle {
   /**
    * Claims kept answers for a waiter whose round they complete: a reply that
    * committed before this process saw the waiter's own round commit.
+   *
+   * Throws only if the claim committed and the answers were then lost (see
+   * `#deliver`), so the caller can report the store's error.
    */
   async #claimFor(registration: WaitRegistration): Promise<void> {
     const { taskId } = registration;
+    let outcome: MutationOutcome<InputResponses>;
     try {
-      const outcome = await this.#mutateWithEffect(taskId, (record) => {
+      outcome = await this.#mutateWithEffect(taskId, (record) => {
         const unclaimed = record.unclaimedInputResponses;
         if (unclaimed === undefined) return undefined;
         if (!this.#workers.awaits(taskId, Object.keys(unclaimed))) {
@@ -305,19 +309,21 @@ export class TaskLifecycle {
           afterCommit: unclaimed,
         };
       });
-      if (outcome.changed) {
-        await this.#deliver(taskId, outcome.afterCommit);
-      } else {
-        // Someone else claimed them with resumeInput(). The round is over, so
-        // nothing else would ever settle this waiter.
-        this.#workers.rejectRegistration(
-          registration,
-          new Error(`Input for task ${taskId} was already claimed`),
-        );
-      }
     } catch (error) {
-      // The answers are still kept for resumeInput().
+      // The claim did not commit, so the answers are still kept for
+      // resumeInput().
       this.#workers.rejectRegistration(registration, error);
+      return;
+    }
+    if (outcome.changed) {
+      await this.#deliver(taskId, outcome.afterCommit);
+    } else {
+      // Someone else claimed them with resumeInput(). The round is over, so
+      // nothing else would ever settle this waiter.
+      this.#workers.rejectRegistration(
+        registration,
+        new Error(`Input for task ${taskId} was already claimed`),
+      );
     }
   }
 

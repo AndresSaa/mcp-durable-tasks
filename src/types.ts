@@ -332,9 +332,10 @@ export interface TaskRecord {
   /**
    * The answers to a completed round that no worker in the process was
    * waiting for, as after a restart. Internal. Present only on a `working`
-   * task, from the update that completed the round until a worker claims
-   * them with {@linkcode TaskHandle.resumeInput}, opens a new round, or the
-   * task ends. A store must persist it like every other field.
+   * task: set by the update that completed the round, or by a later update
+   * when the waiter was rejected before it got them, and kept until a worker
+   * claims them with {@linkcode TaskHandle.resumeInput}, opens a new round,
+   * or the task ends. A store must persist it like every other field.
    */
   readonly unclaimedInputResponses?: InputResponses;
   /**

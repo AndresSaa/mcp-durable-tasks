@@ -112,7 +112,7 @@ Round-trip rules:
 - Retained answers survive `progress()`. They are dropped by any terminal transition and when the worker opens a new round with `requestInput()`, so a restarted worker calls `resumeInput()` first.
 - A waiter is bound to its own round's keys. If an older round completes while a newer `requestInput()` is still being written, the newer waiter does not get the older answers; they are retained, then dropped when the newer round opens.
 - Logs written by `0.3.0` or earlier open unchanged. They have no `unclaimedInputResponses`, so a round such a version completed with no worker stays lost, and `resumeInput()` returns `undefined`.
-- If the waiter is rejected (by a cancellation, say) after the reply committed but before it got the answers, a second CAS write keeps them for `resumeInput()`, unless the task has ended or a newer round has opened. Answers are lost only if the process dies, or the lifecycle closes, between those two writes.
+- If the waiter is rejected (by a cancellation, say) after the reply committed but before it got the answers, a second CAS write keeps them for `resumeInput()`, unless the task has ended or a newer round has opened. Answers are lost if the process dies, or the lifecycle closes, between those two writes, or if the store fails the second one. That store error is not swallowed: `updateTask()` rejects with it, or, when the waiter's own `requestInput()` was claiming the answers, that call does.
 
 ## Store invariants
 
