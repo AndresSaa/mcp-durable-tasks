@@ -6,6 +6,10 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-19
+
+Documentation only: republishes the rewritten README and the updated docs to npm, which bundles them with each version. There are no code changes.
+
 ## [0.4.0] - 2026-10-15
 
 Closes the known issues of `0.3.0` and the input-round races two further audits found in the fixes. Several entries are breaking, so it is a minor release. No new protocol feature was added.
@@ -121,7 +125,8 @@ First public release, followed by a one-time manual npm publication to establish
 - CAS conflicts are recognized by error name, so duplicated installs do not break retries.
 - Worker coordination is process-local: a multi-instance host needs request affinity for live workers.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.0...v0.2.1
