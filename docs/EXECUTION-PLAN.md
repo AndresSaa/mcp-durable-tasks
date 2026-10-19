@@ -8,15 +8,16 @@
 
 Última revisión: 14 de octubre de 2026.
 
-| Versión  | Estado                                                                                                                                                                                                                        |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `v0.1.0` | Publicada. Primera publicación npm manual, sin provenance.                                                                                                                                                                    |
-| `v0.2.0` | Publicada desde `release.yml` con OIDC y provenance (commit `f1154da`). Añadió la demo de crash recovery.                                                                                                                     |
-| `v0.2.1` | Publicada. Solo corrigió el README en npm.                                                                                                                                                                                    |
-| `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`.                                            |
-| `v0.4.0` | En preparación (PR de versión). Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más. Tras fusionar, el tag `v0.4.0`. |
-| `v0.5.0` | Preferida: Fase 12, emisor de cambios para `notifications/tasks`. Bloqueada por A7.                                                                                                                                           |
-| `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                                                                    |
+| Versión  | Estado                                                                                                                                                                             |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v0.1.0` | Publicada. Primera publicación npm manual, sin provenance.                                                                                                                         |
+| `v0.2.0` | Publicada desde `release.yml` con OIDC y provenance (commit `f1154da`). Añadió la demo de crash recovery.                                                                          |
+| `v0.2.1` | Publicada. Solo corrigió el README en npm.                                                                                                                                         |
+| `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`. |
+| `v0.4.0` | Publicada. Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más.           |
+| `v0.4.1` | Publicada. Solo docs: README reescrito y docs actualizados en npm. Sin cambios de código.                                                                                          |
+| `v0.5.0` | Preferida: Fase 12, emisor de cambios para `notifications/tasks`. Bloqueada por A7.                                                                                                |
+| `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                         |
 
 El orden de `0.5.0` y `0.6.0` es una decisión de [contrato de versiones](./contract.md#version-contract), no una reserva irrevocable. Cambiarlo exige antes un cambio contractual.
 
@@ -287,7 +288,7 @@ Cuando las [preguntas de conformidad](./contract.md#extension-conformance-questi
 ## Orden de lo que queda
 
 ```
-0.4.0 (problemas conocidos; falta auditoría y tag)
+0.4.1 (publicada; 0.4.0 cerró los problemas conocidos)
    │
    ▼
 F12 (0.5.0 preferida, emisor, gated por A7) ──▶ F13 (0.6.0 preferida, node:sqlite)

@@ -152,7 +152,7 @@ If you publish a store, open an issue and we can link it from these docs.
 
 ## Status
 
-The current release is `v0.4.0`. Before `1.0.0`, breaking changes ship as minor releases and the public API may still change; the changelog lists them. The roadmap is in the [contract](docs/contract.md).
+The current release is `v0.4.1`. Before `1.0.0`, breaking changes ship as minor releases and the public API may still change; the changelog lists them. The roadmap is in the [contract](docs/contract.md).
 
 Not built yet: a change emitter for the optional `notifications/tasks` message (the engine emits each committed change, the host delivers it). There is no client entry point and none is planned; use `@modelcontextprotocol/ext-tasks/client`.
 
