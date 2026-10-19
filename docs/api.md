@@ -319,7 +319,9 @@ runTaskStoreConformance(
 
 - The factory is called **once per check** and must return a fresh, isolated store. The kit fails if it sees a reused instance.
 - The checks cover the patch rules: `undefined` deletes a field, `null` is a value (`ttlMs: null` comes back as `null`), and `error`, `lastUpdatedAt` and every other patchable field round-trip.
-- `advanceTime`, `now` and `reopen` are optional. Checks that need a missing one are **skipped, not passed**.
+- `advanceTime`, `now` and `reopen` are optional. Checks that need a missing one are **skipped, not passed**. Recording a real skip needs `runner.skip(context, reason)`; without it, a missing optional part fails with a clear message.
+- The reopen checks run a full partial-input round and check that `usedInputKeys` and `unclaimedInputResponses` are stored and replayed like every other field, so a store that keeps a fixed list of fields fails.
+- Every factory call, check, `close()` and `dispose()` has a 10-second limit by default (`timeoutMs`). A failure during cleanup counts as a failed check.
 - `now` returns the store's clock in epoch milliseconds, and the TTL checks stamp their tasks from it. Without it the kit assumes the clock starts at `2026-01-01T00:00:00.000Z`; if yours does not, the TTL checks fail and say to declare `now`.
 
 ---
