@@ -65,7 +65,7 @@ The snapshot sequence is crash-safe:
 
 The snapshot holds only tasks not yet expired by the store's clock. Once the checkpoint commits, the expired ones are removed from the in-memory index too, so a clock that steps back cannot make `get()` serve a task the next open would not find.
 
-A failed automatic compaction never fails the mutation that triggered it: that write was durable before compaction started. The failure goes to `onCompactionError`, and if it left the log unusable, the next operation reports it.
+A failed automatic compaction never fails the mutation that triggered it: that write was durable before compaction started. The failure goes to `onCompactionError`, and if it left the log unusable, the next operation fails with `ERR_WAL_UNUSABLE`. Close and reopen the store to recover.
 
 ## Size limits
 
