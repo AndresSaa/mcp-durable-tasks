@@ -46,7 +46,7 @@ did until it moved to 2.3, or rename them below `Protocol`, at the
 
 A6 is now settled upstream: since `@modelcontextprotocol/server` 2.3.0
 (typescript-sdk#2599), handlers for those two names registered with an explicit
-schema are served. Measured here on server 2.3.1 (12 October 2026): all three
+schema are served. Measured here on server 2.4.0 (10 November 2026): all three
 methods are served that way, while typed registration and
 `fallbackRequestHandler` still answer `-32601` for get and cancel. The probe
 must send `Mcp-Name: <taskId>`, or the SDK answers `-32020` before dispatch.

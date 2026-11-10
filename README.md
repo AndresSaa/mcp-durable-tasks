@@ -106,7 +106,7 @@ The demo runs on every pull request. It also shows how to serve `tasks/*` throug
 
 ## Using it with the official SDK
 
-Since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), register `tasks/get`, `tasks/update` and `tasks/cancel` with an explicit schema: `setRequestHandler(method, schemas, handler)`. Typed registration and `fallbackRequestHandler` still answer `-32601` for get and cancel (measured on 2.3.1). Two details are easy to miss:
+Since `@modelcontextprotocol/server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)), register `tasks/get`, `tasks/update` and `tasks/cancel` with an explicit schema: `setRequestHandler(method, schemas, handler)`. Typed registration and `fallbackRequestHandler` still answer `-32601` for get and cancel (measured on 2.4.0). Two details are easy to miss:
 
 - The SDK answers `-32020` before any handler runs when the `Mcp-Name` header does not match `params.taskId`.
 - On a `2026-07-28` request, `params.inputResponses` arrives as `ctx.mcpReq.inputResponses`. A `tasks/update` handler must read it there.
