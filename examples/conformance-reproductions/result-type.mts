@@ -5,9 +5,9 @@
  *
  * Reported as conformance question A10 in `docs/contract.md`. First measured
  * on `@modelcontextprotocol/*` 2.0.0 (that version of this file is kept at the
- * `v0.2.1` tag); re-measured unchanged on server/client 2.3.1.
+ * `v0.2.1` tag); re-measured on server/client 2.4.0 (10 November 2026).
  *
- * The behaviour has two halves, and 2.3.1 changed only one of them:
+ * The behaviour has two halves:
  *
  * - **Server.** The encode step stamps `resultType: "complete"` on any result
  *   whose handler left it out, `tools/call` included. A task handle that
@@ -204,7 +204,7 @@ assert.equal(conforming.clientCode, "UNSUPPORTED_RESULT_TYPE");
 assert.deepEqual(
   conforming.wireContent,
   [],
-  "observed on 2.3.1: the server also adds an empty `content` to the task handle",
+  "observed on 2.4.0: the server also adds an empty `content` to the task handle",
 );
 
 assert.equal(
@@ -237,7 +237,7 @@ assert.equal(stripped.wireResultType, undefined, "the field really was absent");
 assert.equal(
   stripped.client,
   "rejected",
-  "the 2.3.1 client rejects a 2026-07-28 result without resultType",
+  "the 2.4.0 client rejects a 2026-07-28 result without resultType",
 );
 assert.equal(stripped.clientCode, "INVALID_RESULT");
 

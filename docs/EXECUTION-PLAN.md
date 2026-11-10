@@ -6,7 +6,7 @@
 
 ## 0. Dónde estamos
 
-Última revisión: 14 de octubre de 2026.
+Última revisión: 10 de noviembre de 2026.
 
 | Versión  | Estado                                                                                                                                                                             |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,7 +78,7 @@ Cinco escenarios con proceso hijo real, `SIGKILL` real y puntos de sincronizaci�
 
 - R7.1 corrigió una premisa falsa: el Inspector no reescribe frames. Responde los POST de `tasks/*` en middleware HTTP antes de `createMcpHandler`. La afirmación contraria venía de un borrador y había llegado al contrato público; se corrigió allí.
 - R7.2: la costura la implementa el host, no el paquete. No hay `/sdk-v2`, el paquete no importa el SDK y no convierte un defecto de una versión en API propia.
-- R7.3: upstream readmitió los métodos en `server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)). Re-medido en 2.3.1; el ejemplo perdió su workaround. Reabrir una costura en el paquete exigiría una discusión y un cambio contractual aparte.
+- R7.3: upstream readmitió los métodos en `server` 2.3.0 ([typescript-sdk#2599](https://github.com/modelcontextprotocol/typescript-sdk/pull/2599)). El ejemplo perdió su workaround. La medición actual está en [el contrato](./contract.md#measured-with-240). Reabrir una costura en el paquete exigiría una discusión y un cambio contractual aparte.
 
 ### Documentación y `v0.1.0` (F8)
 

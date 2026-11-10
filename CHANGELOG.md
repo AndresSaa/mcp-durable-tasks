@@ -6,6 +6,10 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ## [Unreleased]
 
+### Changed
+
+- Re-measured the conformance reproductions with SDK server/client 2.4.0 and node 2.1.2. Explicit-schema task handlers still work; the result discriminator defect (A10) remains. The engine and public API are unchanged.
+
 ## [0.4.1] - 2026-10-19
 
 Documentation only: republishes the rewritten README and the updated docs to npm, which bundles them with each version. There are no code changes.
