@@ -16,7 +16,7 @@
 | `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`. |
 | `v0.4.0` | Publicada. Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más.           |
 | `v0.4.1` | Publicada. Solo docs: README reescrito y docs actualizados en npm. Sin cambios de código.                                                                                          |
-| `v0.5.0` | Fase 12 implementada; auditada; pendiente de CI y publicación.                                                                                                                     |
+| `v0.5.0` | Fase 12 implementada y auditada; sin publicar.                                                                                                                                     |
 | `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                         |
 
 El orden de `0.5.0` y `0.6.0` es una decisión de [contrato de versiones](./contract.md#version-contract), no una reserva irrevocable. Cambiarlo exige antes un cambio contractual.
@@ -143,7 +143,7 @@ Se mueven F12 a `0.5.0` y F13 a `0.6.0`: dos de estos cambios rechazan lo que an
 
 ## Fase 12 — Emisor de cambios para `notifications/tasks` · `v0.5.0`
 
-Implementada y auditada; pendiente de CI antes del merge. Contrato:
+Implementada y auditada. El merge exige la matriz requerida en verde. Contrato:
 [notificaciones y decisión A7](./contract.md#change-notifications). Firmas:
 [`onTaskChanged`](./api.md#ontaskchangedtaskid-listener-options).
 
@@ -161,7 +161,7 @@ Work Item: F12.1
 Tipo: feat
 Slug: task-change-emitter
 Base: main
-Estado: implemented-audited-awaiting-ci
+Estado: implemented-audited
 Relationship: no-parent
 ```
 
