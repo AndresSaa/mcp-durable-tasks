@@ -45,14 +45,15 @@ An invalid option throws `TypeError` from the constructor, before any timer star
 
 ### Methods
 
-| Method                               | Serves         | Returns            | Contract                                                  |
-| ------------------------------------ | -------------- | ------------------ | --------------------------------------------------------- |
-| `createTask(init?)`                  | `tools/call`   | `CreateTaskResult` | Creates the task; resolves only once it is durable        |
-| `handle(taskId)`                     | —              | `TaskHandle`       | The write side, for the worker                            |
-| `getTask(taskId)`                    | `tasks/get`    | `GetTaskResult`    | Pure read. Never mutates anything                         |
-| `updateTask(taskId, inputResponses)` | `tasks/update` | `UpdateTaskResult` | Applies outstanding input responses                       |
-| `cancelTask(taskId)`                 | `tasks/cancel` | `CancelTaskResult` | Raises the worker's signal                                |
-| `close()`                            | —              | `Promise<void>`    | Stops the sweeper, wakes parked workers, closes the store |
+| Method                                      | Serves         | Returns            | Contract                                                  |
+| ------------------------------------------- | -------------- | ------------------ | --------------------------------------------------------- |
+| `createTask(init?)`                         | `tools/call`   | `CreateTaskResult` | Creates the task; resolves only once it is durable        |
+| `handle(taskId)`                            | —              | `TaskHandle`       | The write side, for the worker                            |
+| `getTask(taskId)`                           | `tasks/get`    | `GetTaskResult`    | Pure read. Never mutates anything                         |
+| `updateTask(taskId, inputResponses)`        | `tasks/update` | `UpdateTaskResult` | Applies outstanding input responses                       |
+| `cancelTask(taskId)`                        | `tasks/cancel` | `CancelTaskResult` | Raises the worker's signal                                |
+| `onTaskChanged(taskId, listener, options?)` | —              | `() => void`       | Observes local commits to one ID                          |
+| `close()`                                   | —              | `Promise<void>`    | Stops the sweeper, wakes parked workers, closes the store |
 
 #### `createTask(init?)`
 
@@ -100,6 +101,52 @@ Raises the worker's `AbortSignal` with a `TaskCancelled` reason and **changes no
 Cancellation is cooperative and eventually consistent: the task may stay `working` for a while, or end at another terminal status if the work finished first. A worker that honours the signal calls `handle.cancelled()`; one that ignores it leaves the task to its TTL.
 
 The raised signal is process-local. A worker here that reads `handle.signal` later still finds it raised, until the task ends through this lifecycle, expires by its clock, or `close()` runs ([contract](contract.md#process-boundaries)).
+
+#### `onTaskChanged(taskId, listener, options?)`
+
+```ts
+type TaskChangeListener = (task: DetailedTask) => void | Promise<void>;
+interface TaskChangeOptions {
+  onError?: (error: unknown) => void;
+}
+
+onTaskChanged(
+  taskId: string,
+  listener: TaskChangeListener,
+  options?: TaskChangeOptions,
+): () => void;
+```
+
+Registers a process-local listener for one ID, without reading the store or
+sending an initial snapshot. The returned unsubscribe is idempotent. The host
+checks authorization, obtains the initial snapshot and owns stream teardown.
+
+Callbacks receive independent `DetailedTask` copies, including the result
+discriminator; this is not a JSON-RPC envelope. They run after commit without
+waiting for their promises. Sync throws, async rejections and projection errors
+go to the registration's optional `onError`; omitted handlers discard them.
+Throws or rejections from `onError` itself are contained. Async callbacks and
+error handlers may finish after unsubscribe or close.
+
+Registrations of the same callback are independent. Invalid IDs (not strings),
+listeners or `onError` handlers throw `TypeError` at registration. Registering
+after close throws `Error("TaskLifecycle is closed")`. There is no existence
+check, so a host can register an ID before creation. Unknown IDs receive no
+snapshot. Close clears registrations and never waits for callback promises.
+
+```ts
+const stop = tasks.onTaskChanged(
+  taskId,
+  (snapshot) => {
+    host.markTaskChanged(snapshot.taskId); // host coalesces reads and sends
+  },
+  { onError: (error) => host.report(error) },
+);
+// Call stop() when the host's subscription ends.
+```
+
+The [notification contract](contract.md#change-notifications) defines which
+writes emit, concurrency order, TTL and recovery. No `TaskStore` change is needed.
 
 #### `close()`
 
@@ -161,7 +208,9 @@ const answers = await task.requestInput({
 - **Keys are unique for the task's whole lifetime**, including after it ends and across a restart. Reusing one throws `DuplicateInputKeyError`.
 - **The promise settles exactly once.** It resolves when every key is answered, and rejects if the task is cancelled, finishes another way, expires, or the engine closes. It never leaks.
 
-There is deliberately no hook for the moment the task parks; clients learn the keys by polling `tasks/get`. In a test, poll `getTask` until the status is `input_required`.
+Clients learn outstanding keys by polling `tasks/get` or from host-delivered
+notifications. A local `onTaskChanged()` listener can observe the committed
+`input_required` snapshot; the host still owns delivery.
 
 ### Worker process affinity
 

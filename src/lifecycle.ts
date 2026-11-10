@@ -6,6 +6,7 @@ import {
 } from "./errors.js";
 import { createTaskHandle, type TaskWriter } from "./handle.js";
 import { mergeInputResponses } from "./input-round.js";
+import { TaskChanges } from "./task-changes.js";
 import type {
   CancelTaskResult,
   CreateTaskResult,
@@ -14,6 +15,8 @@ import type {
   InputRequests,
   InputResponses,
   TaskHandle,
+  TaskChangeListener,
+  TaskChangeOptions,
   TaskLifecycleOptions,
   TaskPatch,
   TaskRecord,
@@ -64,6 +67,7 @@ export class TaskLifecycle {
 
   readonly #workers: WorkerCoordinator;
   readonly #mutator: TaskMutator;
+  readonly #changes: TaskChanges;
   #sweeper: ReturnType<typeof setInterval> | undefined;
   #closed = false;
 
@@ -86,6 +90,7 @@ export class TaskLifecycle {
       );
     }
     this.#now = options.now ?? Date.now;
+    this.#changes = new TaskChanges(this.#now);
     // The lookup lets a signal read before any write learn its task's TTL.
     this.#workers = new WorkerCoordinator(this.#now, (taskId) =>
       this.#store.get(taskId),
@@ -93,7 +98,10 @@ export class TaskLifecycle {
     this.#mutator = new TaskMutator({
       store: this.#store,
       now: this.#now,
-      onCommitted: (record) => this.#workers.observe(record),
+      onCommitted: (record) => {
+        this.#workers.observe(record);
+        this.#changes.emit(record);
+      },
     });
     this.#generateTaskId = options.generateTaskId ?? defaultTaskId;
 
@@ -142,7 +150,9 @@ export class TaskLifecycle {
       createdAt: timestamp,
       lastUpdatedAt: timestamp,
       ttlMs,
-      ...(pollIntervalMs !== undefined && { pollIntervalMs }),
+      ...(pollIntervalMs !== undefined && {
+        pollIntervalMs: pollIntervalMs === 0 ? 0 : pollIntervalMs,
+      }),
       ...(init?.statusMessage !== undefined && {
         statusMessage: init.statusMessage,
       }),
@@ -150,7 +160,18 @@ export class TaskLifecycle {
     };
 
     await this.#store.create(record);
+    this.#changes.emit(record);
     return toCreateTaskResult(record);
+  }
+
+  /** Observe future commits to one ID; no read, replay or initial snapshot. */
+  onTaskChanged(
+    taskId: string,
+    listener: TaskChangeListener,
+    options?: TaskChangeOptions,
+  ): () => void {
+    this.#assertOpen();
+    return this.#changes.subscribe(taskId, listener, options);
   }
 
   /** The handle a worker writes through. */
@@ -354,6 +375,7 @@ export class TaskLifecycle {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    this.#changes.close();
     if (this.#sweeper !== undefined) clearInterval(this.#sweeper);
 
     this.#workers.close(

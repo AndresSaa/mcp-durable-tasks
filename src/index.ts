@@ -41,6 +41,8 @@ export type {
   JsonObject,
   JsonValue,
   TaskError,
+  TaskChangeListener,
+  TaskChangeOptions,
   TaskHandle,
   TaskLifecycleOptions,
   TaskPatch,

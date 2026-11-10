@@ -342,7 +342,8 @@ answers it:
   issues: `fail()` type, sampling `$schema`/`execution`, input responses
   after a restart, signal abort on TTL; breaking, no new protocol feature) →
   preferred `0.5.0`
-  (change emitter for `notifications/tasks`, emit-not-deliver, gated by A7) →
+  (change emitter for `notifications/tasks`, emit-not-deliver; A7 is a recorded
+  package decision, not an upstream ruling) →
   preferred `0.6.0` (first-party `node:sqlite` store; not a SQL connector
   family) → `1.0.0` once the open conformance questions are closed and
   `TaskStore`/`TaskLifecycle` are frozen. If the emitter remains blocked, the version contract permits a

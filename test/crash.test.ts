@@ -46,6 +46,7 @@ afterEach(() => {
  */
 interface Announcement {
   taskId: string;
+  notified?: boolean;
   committedVersion?: number;
   committedStatusMessage?: string;
   fillerTaskIds?: string[];
@@ -101,6 +102,26 @@ async function reopen<T>(
 }
 
 describe("crash recovery (I8)", () => {
+  it("recovers a commit lost before notification without replaying it", async () => {
+    const dir = freshDir();
+    const { taskId, notified, committedVersion } = await killDuring(
+      "commit-before-notification",
+      dir,
+    );
+    expect(notified).toBe(false);
+    await reopen(dir, async (engine, store) => {
+      const changes: unknown[] = [];
+      engine.onTaskChanged(taskId, (task) => {
+        changes.push(task);
+      });
+      expect(await engine.getTask(taskId)).toMatchObject({
+        status: "completed",
+        result: { survived: true },
+      });
+      expect((await store.get(taskId))?.version).toBe(committedVersion);
+      expect(changes).toEqual([]);
+    });
+  });
   it("recovers a task created but never touched again", async () => {
     const dir = freshDir();
     const { taskId } = await killDuring("created", dir);

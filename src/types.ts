@@ -449,6 +449,14 @@ export type CreateTaskResult = BaseTask & { resultType: "task" };
 /** What `tasks/get` returns. */
 export type GetTaskResult = DetailedTask;
 
+/** A local committed snapshot, not a JSON-RPC notification envelope. */
+export type TaskChangeListener = (task: DetailedTask) => void | Promise<void>;
+
+export interface TaskChangeOptions {
+  /** Observer failures never reject a durable write. Omitted: discard errors. */
+  onError?: (error: unknown) => void;
+}
+
 /** Empty `tasks/update` acknowledgement, with the required discriminator. */
 export type UpdateTaskResult = CompleteResult;
 

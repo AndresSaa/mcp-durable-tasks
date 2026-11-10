@@ -425,6 +425,7 @@ describe("the public lifecycle surface", () => {
       "createTask",
       "getTask",
       "handle",
+      "onTaskChanged",
       "updateTask",
     ]);
     expect(

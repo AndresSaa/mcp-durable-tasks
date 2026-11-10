@@ -85,8 +85,9 @@ export class TaskMutator {
         ? this.#now()
         : Math.max(this.#now(), previous);
 
+      let updated: TaskRecord;
       try {
-        const updated = await this.#store.update(
+        updated = await this.#store.update(
           taskId,
           {
             ...decision.patch,
@@ -94,16 +95,18 @@ export class TaskMutator {
           },
           record.version,
         );
-        this.#onCommitted(updated);
-        return {
-          record: updated,
-          changed: true,
-          afterCommit: decision.afterCommit,
-        };
       } catch (error) {
         if (!isConcurrentUpdateError(error)) throw error;
         lastConflict = error;
+        continue;
       }
+      // Post-commit observers must never be mistaken for a losing CAS.
+      this.#onCommitted(updated);
+      return {
+        record: updated,
+        changed: true,
+        afterCommit: decision.afterCommit,
+      };
     }
 
     throw lastConflict;
