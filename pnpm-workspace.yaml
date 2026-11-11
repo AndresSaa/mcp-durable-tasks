@@ -7,3 +7,6 @@ allowBuilds:
 
 overrides:
   esbuild: ^0.28.1
+  # GHSA-587h-7wmj-h5pm (Vite) and GHSA-mrhx-c7xc-m3w5 (Zod).
+  "vite@>=8.2.0 <=8.2.3": 8.2.4
+  "zod@<4.6.6": 4.6.7

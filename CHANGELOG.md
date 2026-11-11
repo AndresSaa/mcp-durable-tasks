@@ -6,6 +6,8 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-11
+
 ### Added
 
 - `TaskLifecycle.onTaskChanged(taskId, listener, options?)` observes local committed snapshots and returns an unsubscribe function. The host delivers `notifications/tasks`; callbacks are best-effort and recovery uses `tasks/get`, with no replay or `TaskStore` change.
@@ -16,7 +18,8 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ### Changed
 
-- Re-measured the conformance reproductions with SDK server/client 2.4.0 and node 2.1.2. Explicit-schema task handlers still work; the result discriminator defect (A10) remains. The engine and public API are unchanged.
+- Re-measured the conformance reproductions with SDK server/client 2.4.0 and node 2.1.2. Explicit-schema task handlers still work; the result discriminator defect (A10) remains.
+- Development and example transitive dependencies include security fixes for Vite and Zod.
 
 ## [0.4.1] - 2026-10-19
 
@@ -137,7 +140,8 @@ First public release, followed by a one-time manual npm publication to establish
 - CAS conflicts are recognized by error name, so duplicated installs do not break retries.
 - Worker coordination is process-local: a multi-instance host needs request affinity for live workers.
 
-[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AndresSaa/mcp-durable-tasks/compare/v0.2.1...v0.3.0

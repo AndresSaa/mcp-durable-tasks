@@ -152,7 +152,7 @@ If you publish a store, open an issue and we can link it from these docs.
 
 ## Status
 
-The current release is `v0.4.1`. Before `1.0.0`, breaking changes ship as minor releases and the public API may still change; the changelog lists them. The roadmap is in the [contract](docs/contract.md).
+This version is `v0.5.0`. Before `1.0.0`, breaking changes ship as minor releases and the public API may still change; the changelog lists them. The roadmap is in the [contract](docs/contract.md).
 
 `TaskLifecycle.onTaskChanged(taskId, listener)` observes committed snapshots for
 the optional `notifications/tasks` message. The engine emits; your host owns

@@ -6,7 +6,7 @@
 
 ## 0. Dónde estamos
 
-Última revisión: 10 de noviembre de 2026.
+Última revisión: 11 de noviembre de 2026.
 
 | Versión  | Estado                                                                                                                                                                             |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,7 +16,7 @@
 | `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`. |
 | `v0.4.0` | Publicada. Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más.           |
 | `v0.4.1` | Publicada. Solo docs: README reescrito y docs actualizados en npm. Sin cambios de código.                                                                                          |
-| `v0.5.0` | Fase 12 implementada y auditada; sin publicar.                                                                                                                                     |
+| `v0.5.0` | Fase 12 fusionada. Versión preparada para el tag; sin publicar.                                                                                                                    |
 | `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                         |
 
 El orden de `0.5.0` y `0.6.0` es una decisión de [contrato de versiones](./contract.md#version-contract), no una reserva irrevocable. Cambiarlo exige antes un cambio contractual.
