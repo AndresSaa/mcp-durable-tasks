@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Frozen reproductions of upstream MCP behaviour reported from this repository. Not usage examples.",
   "scripts": {
-    "all": "node --experimental-strip-types result-type.mts && node --experimental-strip-types schema.mts && node --experimental-strip-types era-gate.mts",
+    "all": "node --experimental-strip-types result-type.mts && node --experimental-strip-types schema.mts && node --experimental-strip-types era-gate.mts && node --experimental-strip-types task-notifications.mts",
     "result-type": "node --experimental-strip-types result-type.mts",
     "schema": "node --experimental-strip-types schema.mts",
     "era-gate": "node --experimental-strip-types era-gate.mts"

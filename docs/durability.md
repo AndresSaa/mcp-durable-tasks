@@ -35,11 +35,19 @@ The default covers the common case, such as a build that was running when the ed
 | Answered with no worker, killed, then claimed  | Answers kept until one worker claims them, then gone      |
 | `complete()` returned, then killed instantly   | Result intact                                             |
 | Acknowledged progress, then killed in appends  | At least that version and value remain                    |
+| Committed, killed before notifying a listener  | State intact; no notification replay                      |
 | Torn record at the tail                        | Truncated away, and the next append does not fuse with it |
 | TTL elapsed while the process was down         | Gone, and not resurrected by replay                       |
 | Killed in a loop of large snapshot compactions | Every task in the confirmed baseline remains complete     |
 
 The kill follows an IPC message from the child, never a sleep: for appends it carries the exact version `progress()` returned, and for compaction it follows one completed snapshot. Which instruction gets interrupted depends on the scheduler; the committed lower bound does not. The child loads `dist/`, so the tests cover the package you install.
+
+## Notification delivery
+
+Durable state does not make callback delivery durable. A process can die after
+a commit and before its listener runs. Reopening emits nothing; recover the
+current state through `tasks/get`. The [notification contract](contract.md#change-notifications)
+explains host snapshots and reconnection.
 
 ## Recovery on open
 

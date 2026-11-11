@@ -38,6 +38,7 @@ Two halves that do not mix. **Everything right of `TaskStore` is durable.** Ever
 | `types.ts`              | The public contract, and nothing else                                        |
 | `index.ts`              | The main entry point's re-exports                                            |
 | `lifecycle.ts`          | The protocol-facing state machine                                            |
+| `task-changes.ts`       | Per-ID local observers; independent wire snapshots and contained errors      |
 | `task-mutator.ts`       | Read, decide, compare-and-swap, retry — the single write path                |
 | `worker-coordinator.ts` | Process-local promises and abort signals                                     |
 | `handle.ts`             | The worker's write side                                                      |

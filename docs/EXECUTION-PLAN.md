@@ -16,7 +16,7 @@
 | `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`. |
 | `v0.4.0` | Publicada. Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más.           |
 | `v0.4.1` | Publicada. Solo docs: README reescrito y docs actualizados en npm. Sin cambios de código.                                                                                          |
-| `v0.5.0` | Preferida: Fase 12, emisor de cambios para `notifications/tasks`. Bloqueada por A7.                                                                                                |
+| `v0.5.0` | Fase 12 implementada y auditada; sin publicar.                                                                                                                                     |
 | `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                         |
 
 El orden de `0.5.0` y `0.6.0` es una decisión de [contrato de versiones](./contract.md#version-contract), no una reserva irrevocable. Cambiarlo exige antes un cambio contractual.
@@ -141,42 +141,40 @@ Se mueven F12 a `0.5.0` y F13 a `0.6.0`: dos de estos cambios rechazan lo que an
 
 ---
 
-## Fase 12 — Emisor de cambios para `notifications/tasks` · `v0.5.0` preferida · gated
+## Fase 12 — Emisor de cambios para `notifications/tasks` · `v0.5.0`
 
-### Qué es
+Implementada y auditada. El merge exige la matriz requerida en verde. Contrato:
+[notificaciones y decisión A7](./contract.md#change-notifications). Firmas:
+[`onTaskChanged`](./api.md#ontaskchangedtaskid-listener-options).
 
-La spec estable permite que el servidor empuje `notifications/tasks` además de atender polls. Cada notificación lleva un `DetailedTask` completo, idéntico a lo que `tasks/get` devolvería en ese momento. Solo el motor sabe cuándo cambia el estado, así que falta un hook de cambio en `TaskLifecycle`:
+La puerta de readiness se pasó el 10 de noviembre de 2026:
 
-- **Emitir, no entregar.** Tras cada cambio confirmado a través de ese `TaskLifecycle`, se emite la misma proyección cerrada que ya calcula para `tasks/get`. `subscriptions/listen`, el acknowledgement, la lista de `taskIds` aceptados y la escritura en el stream son del host. Así no se implementa transporte.
-- **Proceso local.** Solo ve los commits de su propio `TaskLifecycle`. Un cambio confirmado por otra instancia sobre un store compartido no se emite aquí. Se documenta, no se resuelve con un broker.
-- **Nada de `notifications/progress` ni `notifications/message`**: la spec prohíbe enviarlos en el stream de `subscriptions/listen` de una task.
-- **Tipos con nombre.** Valorar exportar `WorkingTask`, `InputRequiredTask`, `CompletedTask`, `FailedTask`, `CancelledTask` y su unión `DetailedTask`, alineados con `2026-07-28`.
-
-La firma exacta se asienta en `api.md` antes del código.
-
-### Qué se decidió no hacer
-
-El driver de cliente (`mcp-durable-tasks/client`) se retiró, no se reprogramó. No se reabre como "F12.2". El razonamiento está en [la decisión del contrato](./contract.md#decision-no-client-follower).
-
-### Puerta de readiness
-
-1. A7 respondida upstream (seguimiento en ext-tasks#24: ¿se reemiten las notificaciones perdidas tras un crash o una desconexión, o el poll es siempre la autoridad?) **o** una decisión explícita del paquete registrada en `contract.md`.
-2. Releer spec estable, schema y SDK instalado. Los fixtures ya están repinchados a `2026-07-28`.
-3. Una integración real con el SDK del host demuestra que puede entregar la notificación sin APIs internas. Si no puede, se documenta como límite del host y no se compensa dentro del paquete.
+- El propietario aprobó la decisión de best-effort. A7 sigue abierta upstream.
+- Se releyeron spec, schema y SDK 2.4.0. Los cinco tipos de estado y
+  `DetailedTask` ya estaban exportados: no hizo falta añadirlos.
+- `task-notifications.mts` demuestra entrega desde un host que compone el
+  transporte público del SDK. `createMcpHandler` y su notifier core siguen
+  sin soportar estos avisos; no se añadió una costura al paquete.
 
 ```text
 Work Item: F12.1
 Tipo: feat
 Slug: task-change-emitter
 Base: main
-Estado: blocked-by-readiness-gate
-Orca identity: feat/f12-1-task-change-emitter
+Estado: implemented-audited
 Relationship: no-parent
 ```
 
-Los tracks (contrato, emisión después del commit y no antes, CAS perdido sin emisión, terminalidad, cierre, integración, docs y auditoría) se detallan al pasar la puerta, no antes.
+El emisor observa creación y CAS confirmado, con errores de listeners aislados
+y sin colas. Las pruebas cubren ambos stores, carreras de input, orden inverso
+de acknowledgements, cierre y recuperación tras kill antes del aviso. El modelo
+property-based comprueba un aviso por commit local vivo. La integración cubre
+autorización, reconexión terminal y limpieza. La auditoría corrigió la
+normalización de `-0` al crear y añadió un límite de bytes al ejemplo de host,
+porque `send()` del SDK no aplica backpressure.
 
-F12 y F13 no se desbloquean entre sí. Si F12 sigue bloqueada cuando F13 cumple su readiness y hay necesidad real del store, un cambio documental separado puede reasignar SQLite al siguiente minor. Los números de versión expresan orden de entrega.
+El driver de cliente sigue retirado. F13 conserva su puerta y versión objetivo;
+implementar el emisor no equivale a publicar `0.5.0`.
 
 ---
 
@@ -291,7 +289,7 @@ Cuando las [preguntas de conformidad](./contract.md#extension-conformance-questi
 0.4.1 (publicada; 0.4.0 cerró los problemas conocidos)
    │
    ▼
-F12 (0.5.0 preferida, emisor, gated por A7) ──▶ F13 (0.6.0 preferida, node:sqlite)
+F12 (0.5.0, emisor implementado; sin publicar) ──▶ F13 (0.6.0 preferida, node:sqlite)
                   │
                   └─ si sigue bloqueada y F13 está ready: decisión contractual
                      separada, F13 ocupa el siguiente minor y F12 se reprograma

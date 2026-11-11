@@ -28,6 +28,24 @@ const store = new WalTaskStore({ dir, compactEvery: null });
 const engine = new TaskLifecycle({ store, sweepIntervalMs: null });
 
 switch (scenario) {
+  case "commit-before-notification": {
+    const { taskId } = await engine.createTask({ ttlMs: null });
+    let notified = false;
+    engine.onTaskChanged(taskId, () => {
+      notified = true;
+    });
+    const update = store.update.bind(store);
+    store.update = async (...args) => {
+      const record = await update(...args);
+      // The write is durable, but its return (and the observer) is held until
+      // this process is killed. This is an explicit IPC boundary, not a race.
+      announce({ taskId, notified, committedVersion: record.version });
+      waitToBeKilled();
+      return new Promise(() => {});
+    };
+    await engine.handle(taskId).complete({ content: [], survived: true });
+    break;
+  }
   case "created": {
     // Nothing has happened since creation. The task must still be recoverable
     // as `working`, which is the weakest and most important case: it is the

@@ -6,6 +6,14 @@ This package is pre-1.0. Until `1.0.0`, a breaking change is a **minor** bump wi
 
 ## [Unreleased]
 
+### Added
+
+- `TaskLifecycle.onTaskChanged(taskId, listener, options?)` observes local committed snapshots and returns an unsubscribe function. The host delivers `notifications/tasks`; callbacks are best-effort and recovery uses `tasks/get`, with no replay or `TaskStore` change.
+
+### Fixed
+
+- Creating a task with `pollIntervalMs: -0` now returns the canonical `0` that both stores keep, including in change callbacks.
+
 ### Changed
 
 - Re-measured the conformance reproductions with SDK server/client 2.4.0 and node 2.1.2. Explicit-schema task handlers still work; the result discriminator defect (A10) remains. The engine and public API are unchanged.

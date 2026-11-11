@@ -4,6 +4,7 @@ import {
   MemoryTaskStore,
   TaskLifecycle,
   type InputRequest,
+  type DetailedTask,
   type InputResponses,
   type JsonObject,
   type TaskPatch,
@@ -64,9 +65,10 @@ interface TrackedWaiter {
 
 class ConflictInjectingStore implements TaskStore {
   readonly inner: MemoryTaskStore;
+  visibleCommits = 0;
   #conflictNextUpdate = false;
 
-  constructor(now: () => number) {
+  constructor(private readonly now: () => number) {
     this.inner = new MemoryTaskStore({ now });
   }
 
@@ -74,15 +76,16 @@ class ConflictInjectingStore implements TaskStore {
     this.#conflictNextUpdate = true;
   }
 
-  create(record: TaskRecord): Promise<void> {
-    return this.inner.create(record);
+  async create(record: TaskRecord): Promise<void> {
+    await this.inner.create(record);
+    this.countVisible(record);
   }
 
   get(taskId: string): Promise<TaskRecord | undefined> {
     return this.inner.get(taskId);
   }
 
-  update(
+  async update(
     taskId: string,
     patch: TaskPatch,
     expectedVersion: number,
@@ -93,7 +96,17 @@ class ConflictInjectingStore implements TaskStore {
       conflict.name = "ConcurrentUpdateError";
       throw conflict;
     }
-    return this.inner.update(taskId, patch, expectedVersion);
+    const record = await this.inner.update(taskId, patch, expectedVersion);
+    this.countVisible(record);
+    return record;
+  }
+
+  private countVisible(record: TaskRecord): void {
+    if (
+      record.ttlMs === null ||
+      this.now() < Date.parse(record.createdAt) + record.ttlMs
+    )
+      this.visibleCommits++;
   }
 
   sweep(now?: number): Promise<number> {
@@ -380,6 +393,10 @@ describe("property-based task state machine", () => {
             sweepIntervalMs: null,
           });
           const handle = engine.handle(TASK_ID);
+          const changes: DetailedTask[] = [];
+          engine.onTaskChanged(TASK_ID, (task) => {
+            changes.push(task);
+          });
           const waiters: TrackedWaiter[] = [];
           let activeWaiter: TrackedWaiter | undefined;
 
@@ -675,6 +692,7 @@ describe("property-based task state machine", () => {
               }
 
               await assertState(model, engine, store, waiters, activeWaiter);
+              expect(changes).toHaveLength(store.visibleCommits);
             }
           } finally {
             await engine.close();
