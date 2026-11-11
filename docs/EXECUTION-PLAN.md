@@ -6,7 +6,7 @@
 
 ## 0. Dónde estamos
 
-Última revisión: 11 de noviembre de 2026.
+Última revisión: 12 de noviembre de 2026.
 
 | Versión  | Estado                                                                                                                                                                             |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,7 +16,7 @@
 | `v0.3.0` | Publicada. Endurecimiento tras la tercera auditoría y alineación con la spec estable `2026-07-28`. Rompe compatibilidad, así que por la regla pre-1.0 no podía salir como `0.2.2`. |
 | `v0.4.0` | Publicada. Cierra los problemas conocidos de `0.3.0`, aborta la `signal` del worker al vencer el TTL y corrige las carreras de input que encontraron dos auditorías más.           |
 | `v0.4.1` | Publicada. Solo docs: README reescrito y docs actualizados en npm. Sin cambios de código.                                                                                          |
-| `v0.5.0` | Fase 12 fusionada. Versión preparada para el tag; sin publicar.                                                                                                                    |
+| `v0.5.0` | Publicada en npm con OIDC y provenance. Incluye el emisor de F12.                                                                                                                  |
 | `v0.6.0` | Preferida: Fase 13, `NodeSqliteTaskStore`.                                                                                                                                         |
 
 El orden de `0.5.0` y `0.6.0` es una decisión de [contrato de versiones](./contract.md#version-contract), no una reserva irrevocable. Cambiarlo exige antes un cambio contractual.
@@ -143,7 +143,7 @@ Se mueven F12 a `0.5.0` y F13 a `0.6.0`: dos de estos cambios rechazan lo que an
 
 ## Fase 12 — Emisor de cambios para `notifications/tasks` · `v0.5.0`
 
-Implementada y auditada. El merge exige la matriz requerida en verde. Contrato:
+Terminada, auditada y publicada como `0.5.0`. Contrato:
 [notificaciones y decisión A7](./contract.md#change-notifications). Firmas:
 [`onTaskChanged`](./api.md#ontaskchangedtaskid-listener-options).
 
@@ -161,7 +161,7 @@ Work Item: F12.1
 Tipo: feat
 Slug: task-change-emitter
 Base: main
-Estado: implemented-audited
+Estado: published
 Relationship: no-parent
 ```
 
@@ -173,8 +173,7 @@ autorización, reconexión terminal y limpieza. La auditoría corrigió la
 normalización de `-0` al crear y añadió un límite de bytes al ejemplo de host,
 porque `send()` del SDK no aplica backpressure.
 
-El driver de cliente sigue retirado. F13 conserva su puerta y versión objetivo;
-implementar el emisor no equivale a publicar `0.5.0`.
+El driver de cliente sigue retirado. F13 conserva su puerta y versión objetivo.
 
 ---
 
@@ -286,10 +285,10 @@ Cuando las [preguntas de conformidad](./contract.md#extension-conformance-questi
 ## Orden de lo que queda
 
 ```
-0.4.1 (publicada; 0.4.0 cerró los problemas conocidos)
+0.5.0 (publicada; emisor de cambios)
    │
    ▼
-F12 (0.5.0, emisor implementado; sin publicar) ──▶ F13 (0.6.0 preferida, node:sqlite)
+F12 (terminada) ──▶ F13 (0.6.0 preferida, node:sqlite)
                   │
                   └─ si sigue bloqueada y F13 está ready: decisión contractual
                      separada, F13 ocupa el siguiente minor y F12 se reprograma
