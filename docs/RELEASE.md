@@ -242,7 +242,7 @@ Tras fusionar el PR de versión, la secuencia es la misma para cada versión; so
 git switch main
 git pull --ff-only origin main
 if (git status --porcelain) { throw "main must be clean before tagging" }
-$releaseVersion = "0.4.0"  # la versión que se publica
+$releaseVersion = "0.5.0"  # la versión que se publica
 if ((node -p "require('./package.json').version") -ne $releaseVersion) { throw "package.json version mismatch" }
 if (-not (Select-String -Quiet -LiteralPath CHANGELOG.md -SimpleMatch "## [$releaseVersion]")) { throw "CHANGELOG section missing" }
 $releaseTag = "v$releaseVersion"
